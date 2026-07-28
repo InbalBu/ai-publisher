@@ -8,6 +8,7 @@ using MekomonPublisher.Api.Models;
 using MekomonPublisher.Api.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -91,17 +92,49 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+// Render (and most PaaS hosts) sit in front of this app as a reverse proxy,
+// so Kestrel would otherwise see every request as coming from the proxy's
+// internal IP, making any per-IP logic below silently useless. Trusting the
+// forwarded headers here is what lets RemoteIpAddress reflect the real
+// visitor. KnownProxies/KnownNetworks are cleared because Render's edge
+// isn't a fixed, allowlist-able address the way an on-prem load balancer
+// would be; Kestrel itself is never directly reachable from the internet
+// here, so trusting the one hop in front of it is the standard tradeoff.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 builder.Services.AddRateLimiter(options =>
 {
-    // Once this is on a public URL, the login endpoint is the only thing an
-    // attacker can reach without a session. 5 attempts/minute/IP is enough
-    // friction to make brute-forcing impractical without getting in your way.
-    options.AddFixedWindowLimiter("login", limiter =>
-    {
-        limiter.PermitLimit = 5;
-        limiter.Window = TimeSpan.FromMinutes(1);
-        limiter.QueueLimit = 0;
-    });
+    // Partitioned per client IP, not global: a fixed window limiter added via
+    // AddFixedWindowLimiter (no partition key) is a single shared bucket for
+    // every visitor combined, which both throttles legitimate users
+    // needlessly and is trivially exhausted by one attacker to lock everyone
+    // else out. AddPolicy + RateLimitPartition gives each IP its own bucket.
+    options.AddPolicy("login", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+        }));
+
+    // A compromised or just-buggy session shouldn't be able to burn through
+    // the Gemini budget or flood WordPress with drafts at wire speed. This is
+    // generous enough that no normal single-operator workflow ever notices it.
+    options.AddPolicy("publish", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+        partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        factory: _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(5),
+            QueueLimit = 0,
+        }));
+
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
 
@@ -116,6 +149,10 @@ using (IServiceScope scope = app.Services.CreateScope())
     // team to coordinate schema changes across.
     scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreated();
 }
+
+// Must run before anything that reads the client's address (rate limiting,
+// logging, auth) so those see the real visitor, not Render's proxy.
+app.UseForwardedHeaders();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -210,7 +247,8 @@ app.MapPost("/api/publish", async (HttpRequest request, ArticlePublisher publish
     PublishResult result = await publisher.PublishAsync(publishRequest, ct);
     return Results.Ok(result);
 })
-.RequireAuthorization();
+.RequireAuthorization()
+.RequireRateLimiting("publish");
 
 app.MapFallbackToFile("index.html");
 
