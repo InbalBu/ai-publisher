@@ -1,0 +1,41 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+artifacts/
+
+## Visual Studio / Rider / VS Code
+.vs/
+.idea/
+*.user
+*.suo
+*.userprefs
+.vscode/*
+!.vscode/extensions.json
+
+## Test results
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+coverage*.json
+coverage*.xml
+coverage*.info
+
+## Local application state (SQLite database and its journals)
+App_Data/
+*.db
+*.db-shm
+*.db-wal
+
+## Secrets. Never commit these; use dotnet user-secrets locally and
+## environment variables in production. See ARCHITECTURE.md section 14.
+appsettings.Local.json
+*.env
+.env
+
+## Node (web/ lands in M12)
+node_modules/
+dist/
+
+## Logs
+*.log

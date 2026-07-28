@@ -1,0 +1,40 @@
+namespace MekomonPublisher.Api.Models;
+
+/// <summary>What the operator submits from the publish form.</summary>
+public sealed class PublishRequest
+{
+    public required string RawText { get; init; }
+
+    public required int CategoryId { get; init; }
+
+    /// <summary>Either "publish" or "draft".</summary>
+    public required string Status { get; init; }
+
+    /// <summary>Index into <see cref="Images"/> of the one to use as the featured image.</summary>
+    public required int FeaturedImageIndex { get; init; }
+
+    public required IReadOnlyList<UploadedImage> Images { get; init; }
+}
+
+public sealed class UploadedImage
+{
+    public required string FileName { get; init; }
+
+    public required byte[] Bytes { get; init; }
+}
+
+/// <summary>What the API returns after a publish attempt.</summary>
+public sealed class PublishResult
+{
+    public required bool Success { get; init; }
+
+    public string? Title { get; init; }
+
+    public string? Url { get; init; }
+
+    public string? Status { get; init; }
+
+    public required long ElapsedMs { get; init; }
+
+    public string? Error { get; init; }
+}

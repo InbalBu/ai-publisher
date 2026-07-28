@@ -1,0 +1,100 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using MekomonPublisher.Api.Models;
+
+namespace MekomonPublisher.Api.Services;
+
+/// <summary>
+/// Thin wrapper over the WordPress REST API. BaseAddress and the Application
+/// Password auth header are configured once, on registration, in Program.cs.
+/// </summary>
+public sealed class WordPressClient(HttpClient http)
+{
+    public async Task<WpMedia> UploadMediaAsync(byte[] bytes, string fileName, CancellationToken ct)
+    {
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+        content.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment") { FileName = fileName };
+
+        HttpResponseMessage response = await http.PostAsync("wp-json/wp/v2/media", content, ct);
+        await EnsureSuccessAsync(response, "upload media", ct);
+
+        return (await response.Content.ReadFromJsonAsync<WpMedia>(cancellationToken: ct))!;
+    }
+
+    public async Task SetMediaMetadataAsync(int mediaId, string altText, string? caption, CancellationToken ct)
+    {
+        var body = new Dictionary<string, string> { ["alt_text"] = altText };
+        if (!string.IsNullOrWhiteSpace(caption))
+        {
+            body["caption"] = caption;
+        }
+
+        HttpResponseMessage response = await http.PostAsJsonAsync($"wp-json/wp/v2/media/{mediaId}", body, ct);
+        await EnsureSuccessAsync(response, $"set metadata on media {mediaId}", ct);
+    }
+
+    public async Task DeleteMediaAsync(int mediaId, CancellationToken ct)
+    {
+        // Best-effort cleanup on failure. Never throw: the operator's failure
+        // message matters more than a media asset that will be visible and
+        // deletable in wp-admin anyway.
+        try
+        {
+            await http.DeleteAsync($"wp-json/wp/v2/media/{mediaId}?force=true", ct);
+        }
+        catch (HttpRequestException)
+        {
+            // Logged by the caller's catch block with full context; nothing more to do here.
+        }
+    }
+
+    public async Task<IReadOnlyList<int>> ResolveOrCreateTagIdsAsync(IReadOnlyList<string> names, CancellationToken ct)
+    {
+        var ids = new List<int>();
+
+        foreach (string name in names.Where(n => !string.IsNullOrWhiteSpace(n)))
+        {
+            string trimmed = name.Trim();
+
+            List<WpTerm>? found = await http.GetFromJsonAsync<List<WpTerm>>(
+                $"wp-json/wp/v2/tags?search={Uri.EscapeDataString(trimmed)}&per_page=100", ct);
+
+            WpTerm? exact = found?.FirstOrDefault(t => string.Equals(t.Name, trimmed, StringComparison.OrdinalIgnoreCase));
+
+            if (exact is not null)
+            {
+                ids.Add(exact.Id);
+                continue;
+            }
+
+            HttpResponseMessage createResponse = await http.PostAsJsonAsync(
+                "wp-json/wp/v2/tags", new { name = trimmed }, ct);
+            await EnsureSuccessAsync(createResponse, $"create tag '{trimmed}'", ct);
+
+            WpTerm created = (await createResponse.Content.ReadFromJsonAsync<WpTerm>(cancellationToken: ct))!;
+            ids.Add(created.Id);
+        }
+
+        return ids;
+    }
+
+    public async Task<WpPost> CreatePostAsync(CreatePostBody body, CancellationToken ct)
+    {
+        HttpResponseMessage response = await http.PostAsJsonAsync("wp-json/wp/v2/posts", body, ct);
+        await EnsureSuccessAsync(response, "create post", ct);
+
+        return (await response.Content.ReadFromJsonAsync<WpPost>(cancellationToken: ct))!;
+    }
+
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response, string action, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        string body = await response.Content.ReadAsStringAsync(ct);
+        throw new InvalidOperationException($"WordPress failed to {action}: {(int)response.StatusCode} {body}");
+    }
+}
