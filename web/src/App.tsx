@@ -20,6 +20,8 @@ import LoginPage from './LoginPage'
 interface ImageEntry {
   file: File
   previewUrl: string
+  /** Photo credit, e.g. "צילום: ישראל ישראלי". Blank means no caption is added. */
+  caption: string
 }
 
 function App() {
@@ -54,8 +56,13 @@ function App() {
     const added = Array.from(fileList).map((file) => ({
       file,
       previewUrl: URL.createObjectURL(file),
+      caption: '',
     }))
     setImages((prev) => [...prev, ...added])
+  }
+
+  function updateCaption(index: number, caption: string) {
+    setImages((prev) => prev.map((image, i) => (i === index ? { ...image, caption } : image)))
   }
 
   function removeImage(index: number) {
@@ -83,6 +90,7 @@ function App() {
         status,
         featuredImageIndex: featuredIndex,
         images: images.map((i) => i.file),
+        captions: images.map((i) => i.caption),
       })
       setResult(outcome)
     } catch (err) {
@@ -174,7 +182,7 @@ function App() {
                 sx={{
                   mt: 2,
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
                   gap: 2,
                 }}
               >
@@ -202,6 +210,14 @@ function App() {
                         ✕
                       </IconButton>
                     </Stack>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      placeholder="קרדיט לתמונה (אופציונלי)"
+                      value={image.caption}
+                      onChange={(e) => updateCaption(index, e.target.value)}
+                      sx={{ mt: 1 }}
+                    />
                   </Paper>
                 ))}
               </Box>

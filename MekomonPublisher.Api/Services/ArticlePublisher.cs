@@ -149,9 +149,11 @@ public sealed class ArticlePublisher(
 
     /// <summary>
     /// Uploads with an empty alt text placeholder; the real alt text is patched
-    /// in once Gemini's response is available. Array order is preserved by the
-    /// caller (LINQ Select over an ordered source), so no explicit index needs
-    /// to travel through this method.
+    /// in once Gemini's response is available. The caption, in contrast, is
+    /// known immediately: it comes only from what the operator typed, never
+    /// from Gemini, so it is set here and never touched again. Array order is
+    /// preserved by the caller (LINQ Select over an ordered source), so no
+    /// explicit index needs to travel through this method.
     /// </summary>
     private async Task<GutenbergBuilder.ImageInfo> UploadBodyImageAsync(
         UploadedImage image, List<int> uploadedMediaIds, CancellationToken ct)
@@ -164,7 +166,8 @@ public sealed class ArticlePublisher(
             uploadedMediaIds.Add(media.Id);
         }
 
-        return new GutenbergBuilder.ImageInfo(media.Id, media.SourceUrl, processed.Width, processed.Height, "", null);
+        string? caption = string.IsNullOrWhiteSpace(image.Caption) ? null : image.Caption.Trim();
+        return new GutenbergBuilder.ImageInfo(media.Id, media.SourceUrl, processed.Width, processed.Height, "", caption);
     }
 
     private async Task<int> UploadFeaturedImageAsync(
@@ -181,6 +184,12 @@ public sealed class ArticlePublisher(
         return media.Id;
     }
 
+    /// <summary>
+    /// Patches WordPress media metadata with Gemini's alt text and, if the
+    /// operator supplied one, the caption set at upload time. Fires even when
+    /// only a caption is present (no alt text from Gemini), so a real,
+    /// operator-provided credit is never silently dropped.
+    /// </summary>
     private async Task ApplyAltTextAsync(
         IReadOnlyList<GutenbergBuilder.ImageInfo> bodyImages,
         IReadOnlyList<ImagePlacement> placements,
@@ -190,18 +199,21 @@ public sealed class ArticlePublisher(
 
         for (var i = 0; i < bodyImages.Count; i++)
         {
-            ImagePlacement? placement = placements.FirstOrDefault(p => p.ImageIndex == i);
-            if (placement is null || string.IsNullOrWhiteSpace(placement.AltText))
+            string altText = placements.FirstOrDefault(p => p.ImageIndex == i)?.AltText ?? "";
+            string? caption = bodyImages[i].Caption;
+
+            if (string.IsNullOrWhiteSpace(altText) && string.IsNullOrWhiteSpace(caption))
             {
                 continue;
             }
 
-            tasks.Add(wordPress.SetMediaMetadataAsync(bodyImages[i].MediaId, placement.AltText, placement.Caption, ct));
+            tasks.Add(wordPress.SetMediaMetadataAsync(bodyImages[i].MediaId, altText, caption, ct));
         }
 
         await Task.WhenAll(tasks);
     }
 
+    /// <summary>Merges in Gemini's alt text only. Caption was already set at upload time and is never overwritten here.</summary>
     private static GutenbergBuilder.ImageInfo[] MergeAltText(
         IReadOnlyList<GutenbergBuilder.ImageInfo> bodyImages, IReadOnlyList<ImagePlacement> placements)
     {
@@ -209,9 +221,7 @@ public sealed class ArticlePublisher(
             .Select((image, i) =>
             {
                 ImagePlacement? placement = placements.FirstOrDefault(p => p.ImageIndex == i);
-                return placement is null
-                    ? image
-                    : image with { AltText = placement.AltText, Caption = placement.Caption };
+                return placement is null ? image : image with { AltText = placement.AltText };
             })
             .ToArray();
     }

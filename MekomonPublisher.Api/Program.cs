@@ -227,12 +227,18 @@ app.MapPost("/api/publish", async (HttpRequest request, ArticlePublisher publish
         return Results.BadRequest(new { error = "categoryId and featuredImageIndex must be integers." });
     }
 
+    // One "imageCaptions" value per image, in the same order the files were
+    // appended, sent even when empty so the two lists always line up by index.
+    Microsoft.Extensions.Primitives.StringValues captions = form["imageCaptions"];
+
     var images = new List<UploadedImage>();
-    foreach (IFormFile file in form.Files)
+    for (var i = 0; i < form.Files.Count; i++)
     {
+        IFormFile file = form.Files[i];
         using var buffer = new MemoryStream();
         await file.CopyToAsync(buffer, ct);
-        images.Add(new UploadedImage { FileName = file.FileName, Bytes = buffer.ToArray() });
+        string? caption = i < captions.Count && !string.IsNullOrWhiteSpace(captions[i]) ? captions[i] : null;
+        images.Add(new UploadedImage { FileName = file.FileName, Bytes = buffer.ToArray(), Caption = caption });
     }
 
     var publishRequest = new PublishRequest

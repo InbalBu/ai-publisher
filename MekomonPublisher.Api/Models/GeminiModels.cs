@@ -62,7 +62,4 @@ public sealed class ImagePlacement
 
     [JsonPropertyName("altText")]
     public string AltText { get; set; } = "";
-
-    [JsonPropertyName("caption")]
-    public string? Caption { get; set; }
 }

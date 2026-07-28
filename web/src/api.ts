@@ -57,6 +57,8 @@ export interface PublishArgs {
   status: 'publish' | 'draft'
   featuredImageIndex: number
   images: File[]
+  /** One entry per image, same order, '' where the operator left the credit blank. */
+  captions: string[]
 }
 
 export async function publishArticle(args: PublishArgs): Promise<PublishResult> {
@@ -65,8 +67,10 @@ export async function publishArticle(args: PublishArgs): Promise<PublishResult> 
   form.set('categoryId', String(args.categoryId))
   form.set('status', args.status)
   form.set('featuredImageIndex', String(args.featuredImageIndex))
-  for (const image of args.images) {
-    form.append('images', image, image.name)
+  for (let i = 0; i < args.images.length; i++) {
+    form.append('images', args.images[i], args.images[i].name)
+    // Appended in lockstep with the file above; the server zips them by index.
+    form.append('imageCaptions', args.captions[i] ?? '')
   }
 
   const response = await fetch('/api/publish', {

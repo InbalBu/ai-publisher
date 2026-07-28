@@ -124,7 +124,8 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
         sb.AppendLine("- 'seoTitle' is at most 66 characters and does not repeat the site name.");
         sb.AppendLine("- 'focusKeyword' is the one or two words naming the central person, business, or topic.");
         sb.AppendLine("- 'tags' is 1 to 2 topical tags naming the central entity. Do not include generic site or location tags; those are added automatically.");
-        sb.AppendLine($"- The article will include exactly {imageCount} image(s), indexed 0 to {imageCount - 1} in upload order. Provide one 'imagePlacements' entry per image with a descriptive Hebrew 'altText'. Images 0 and 1 are always placed automatically as the lead and second image, so their 'afterBlockIndex' is ignored, but still give them alt text. For images with index 2 or higher, set 'afterBlockIndex' to place them naturally within the body (0 means right after the deck, before any block).");
+        sb.AppendLine($"- The article will include exactly {imageCount} image(s), indexed 0 to {imageCount - 1} in upload order. Provide one 'imagePlacements' entry per image with a descriptive Hebrew 'altText' (a neutral description of what the image shows, not a caption or credit). Images 0 and 1 are always placed automatically as the lead and second image, so their 'afterBlockIndex' is ignored, but still give them alt text. For images with index 2 or higher, set 'afterBlockIndex' to place them naturally within the body (0 means right after the deck, before any block).");
+        sb.AppendLine("- Do not invent photo captions or photographer credits anywhere. You have no way of knowing who took a photo; any operator-supplied credit is added separately, outside this generation step.");
         sb.AppendLine();
         sb.AppendLine($"Category: {categoryName}");
         sb.AppendLine();
@@ -173,7 +174,6 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
                         ["imageIndex"] = new JsonObject { ["type"] = "integer" },
                         ["afterBlockIndex"] = new JsonObject { ["type"] = "integer" },
                         ["altText"] = new JsonObject { ["type"] = "string" },
-                        ["caption"] = new JsonObject { ["type"] = "string" },
                     },
                     ["required"] = new JsonArray { "imageIndex", "altText" },
                 },
