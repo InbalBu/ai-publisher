@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Mekomon AI Bridge
- * Description: Exposes the three Yoast SEO meta keys the publisher app needs to write, over the REST API. Nothing else. Install as a must-use plugin (copy to wp-content/mu-plugins/).
- * Version: 1.0.0
+ * Description: Exposes the Yoast SEO meta keys the publisher app needs to write, over the REST API. Nothing else. Install as a must-use plugin (copy to wp-content/mu-plugins/).
+ * Version: 1.1.0
  */
 
 if (!defined('ABSPATH')) {
@@ -14,6 +14,12 @@ add_action('init', function () {
         '_yoast_wpseo_title',
         '_yoast_wpseo_metadesc',
         '_yoast_wpseo_focuskw',
+        // Pins the exact Facebook/WhatsApp (Open Graph) share-preview image to
+        // the post's featured image instead of relying on Yoast's automatic
+        // fallback, which is what went missing on the post that shared with
+        // no preview.
+        '_yoast_wpseo_opengraph-image',
+        '_yoast_wpseo_opengraph-image-id',
     ];
 
     foreach ($keys as $key) {

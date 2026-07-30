@@ -16,6 +16,13 @@ namespace MekomonPublisher.Api.Services;
 /// distinct real body blocks (so genuine article text separates them), and a
 /// normalization pass guarantees the invariant even if there are more images
 /// than there is text to spread them across.
+///
+/// Every element is wrapped in the real &lt;!-- wp:... --&gt; block comments,
+/// not just block-shaped HTML: the Gutenberg editor decides whether content
+/// is "already blocks" by parsing those comments, not by recognizing the
+/// wp-block-* classes. Markup without them loads as unconverted Classic
+/// content (the "המרה לבלוקים" prompt), even though it renders identically
+/// on the published page.
 /// </summary>
 public static class GutenbergBuilder
 {
@@ -27,15 +34,14 @@ public static class GutenbergBuilder
 
     public static string Build(GeneratedArticle article, IReadOnlyList<ImageInfo> images)
     {
-        List<SequenceItem> items = [new TextItem("<p class=\"wp-block-paragraph\"></p>")];
+        List<SequenceItem> items = [new TextItem(ParagraphBlock(""))];
 
         if (images.Count > 0)
         {
             items.Add(new ImageItem(images[0]));
         }
 
-        items.Add(new TextItem(
-            $"<h2 class=\"wp-block-heading\">{HtmlSafety.Clean(article.Subtitle)}</h2>"));
+        items.Add(new TextItem(HeadingBlock(HtmlSafety.Clean(article.Subtitle), 2)));
 
         if (images.Count > 1)
         {
@@ -46,7 +52,7 @@ public static class GutenbergBuilder
 
         for (var blockIndex = 0; blockIndex < article.Blocks.Count; blockIndex++)
         {
-            items.Add(new TextItem(RenderBlockHtml(article.Blocks[blockIndex])));
+            items.Add(new TextItem(RenderBlock(article.Blocks[blockIndex])));
 
             if (imagesBySlot.TryGetValue(blockIndex, out List<int>? atThisSlot))
             {
@@ -59,8 +65,8 @@ public static class GutenbergBuilder
             items.AddRange(atEnd.Select(imageIndex => new ImageItem(images[imageIndex])));
         }
 
-        items.Add(new TextItem("<p class=\"wp-block-paragraph\"></p>"));
-        items.Add(new TextItem("<p class=\"wp-block-paragraph\"></p>"));
+        items.Add(new TextItem(ParagraphBlock("")));
+        items.Add(new TextItem(ParagraphBlock("")));
 
         return Render(NormalizeNoAdjacentImages(items));
     }
@@ -113,7 +119,7 @@ public static class GutenbergBuilder
         {
             if (item is ImageItem && normalized.Count > 0 && normalized[^1] is ImageItem)
             {
-                normalized.Add(new TextItem("<p class=\"wp-block-paragraph\"></p>"));
+                normalized.Add(new TextItem(ParagraphBlock("")));
             }
 
             normalized.Add(item);
@@ -134,7 +140,7 @@ public static class GutenbergBuilder
                     sb.Append(text.Html);
                     break;
                 case ImageItem image:
-                    AppendImage(sb, image.Image);
+                    sb.Append(ImageBlock(image.Image));
                     break;
             }
         }
@@ -142,42 +148,44 @@ public static class GutenbergBuilder
         return sb.ToString();
     }
 
-    private static string RenderBlockHtml(ArticleBlock block)
+    private static string RenderBlock(ArticleBlock block) => block.Type switch
+    {
+        "heading3" => HeadingBlock(HtmlSafety.Clean(block.Html), 3),
+        "list" => ListBlock((block.Items ?? []).Select(HtmlSafety.Clean)),
+        _ => ParagraphBlock(HtmlSafety.Clean(block.Html)),
+    };
+
+    private static string ParagraphBlock(string? innerHtml) =>
+        $"<!-- wp:paragraph -->\n<p class=\"wp-block-paragraph\">{innerHtml}</p>\n<!-- /wp:paragraph -->\n";
+
+    private static string HeadingBlock(string? innerHtml, int level)
+    {
+        string attrs = level == 2 ? "" : $" {{\"level\":{level}}}";
+        return $"<!-- wp:heading{attrs} -->\n<h{level} class=\"wp-block-heading\">{innerHtml}</h{level}>\n<!-- /wp:heading -->\n";
+    }
+
+    private static string ListBlock(IEnumerable<string> items)
     {
         var sb = new StringBuilder();
-        AppendBlock(sb, block);
+        sb.Append("<!-- wp:list -->\n<ul class=\"wp-block-list\">");
+
+        foreach (string item in items)
+        {
+            sb.Append("<!-- wp:list-item -->\n<li>").Append(item).Append("</li>\n<!-- /wp:list-item -->");
+        }
+
+        sb.Append("</ul>\n<!-- /wp:list -->\n");
         return sb.ToString();
     }
 
-    private static void AppendBlock(StringBuilder sb, ArticleBlock block)
+    private static string ImageBlock(ImageInfo image)
     {
-        switch (block.Type)
-        {
-            case "heading3":
-                sb.Append("<h3 class=\"wp-block-heading\">")
-                  .Append(HtmlSafety.Clean(block.Html))
-                  .Append("</h3>");
-                break;
+        var sb = new StringBuilder();
+        sb.Append("<!-- wp:image {\"id\":").Append(image.MediaId)
+          .Append(",\"width\":").Append(image.Width)
+          .Append(",\"height\":").Append(image.Height)
+          .Append(",\"sizeSlug\":\"large\",\"linkDestination\":\"none\"} -->\n");
 
-            case "list":
-                sb.Append("<ul class=\"wp-block-list\">");
-                foreach (string item in block.Items ?? [])
-                {
-                    sb.Append("<li>").Append(HtmlSafety.Clean(item)).Append("</li>");
-                }
-                sb.Append("</ul>");
-                break;
-
-            default: // paragraph
-                sb.Append("<p class=\"wp-block-paragraph\">")
-                  .Append(HtmlSafety.Clean(block.Html))
-                  .Append("</p>");
-                break;
-        }
-    }
-
-    private static void AppendImage(StringBuilder sb, ImageInfo image)
-    {
         sb.Append("<figure class=\"wp-block-image size-large\"><img src=\"")
           .Append(WebUtility.HtmlEncode(image.Url))
           .Append("\" alt=\"")
@@ -197,6 +205,7 @@ public static class GutenbergBuilder
               .Append("</figcaption>");
         }
 
-        sb.Append("</figure>");
+        sb.Append("</figure>\n<!-- /wp:image -->\n");
+        return sb.ToString();
     }
 }

@@ -49,6 +49,7 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
                     continue;
                 }
 
+                TextSanitizer.Clean(article);
                 return article;
             }
             catch (JsonException ex)

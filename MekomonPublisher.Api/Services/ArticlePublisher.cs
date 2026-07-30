@@ -38,7 +38,7 @@ public sealed class ArticlePublisher(
                 .Select(image => UploadBodyImageAsync(image, uploadedMediaIds, ct))
                 .ToArray();
 
-            Task<int> featuredUploadTask = UploadFeaturedImageAsync(
+            Task<WpMedia> featuredUploadTask = UploadFeaturedImageAsync(
                 request.Images[request.FeaturedImageIndex], uploadedMediaIds, ct);
 
             await Task.WhenAll([.. bodyUploadTasks, featuredUploadTask]);
@@ -51,7 +51,9 @@ public sealed class ArticlePublisher(
             string content = GutenbergBuilder.Build(article, bodyImages);
 
             IReadOnlyList<int> topicalTagIds = await wordPress.ResolveOrCreateTagIdsAsync(article.Tags, ct);
-            int[] allTagIds = [.. ArticleFormat.BoilerplateTagIds, .. topicalTagIds];
+            int[] allTagIds = ArticleFormat.BoilerplateTagIds.Concat(topicalTagIds).Distinct().ToArray();
+
+            WpMedia featuredMedia = await featuredUploadTask;
 
             WpPost post = await wordPress.CreatePostAsync(new CreatePostBody
             {
@@ -60,12 +62,17 @@ public sealed class ArticlePublisher(
                 Status = request.Status,
                 Categories = [request.CategoryId],
                 Tags = allTagIds,
-                FeaturedMedia = await featuredUploadTask,
+                FeaturedMedia = featuredMedia.Id,
                 Meta = new Dictionary<string, string>
                 {
                     ["_yoast_wpseo_title"] = article.SeoTitle,
                     ["_yoast_wpseo_metadesc"] = article.MetaDescription,
                     ["_yoast_wpseo_focuskw"] = article.FocusKeyword,
+                    // Pinned explicitly rather than left to Yoast's automatic
+                    // featured-image fallback, so the Facebook/WhatsApp share
+                    // preview always has an image regardless of that setting.
+                    ["_yoast_wpseo_opengraph-image"] = featuredMedia.SourceUrl,
+                    ["_yoast_wpseo_opengraph-image-id"] = featuredMedia.Id.ToString(),
                 },
             }, ct);
 
@@ -170,7 +177,7 @@ public sealed class ArticlePublisher(
         return new GutenbergBuilder.ImageInfo(media.Id, media.SourceUrl, processed.Width, processed.Height, "", caption);
     }
 
-    private async Task<int> UploadFeaturedImageAsync(
+    private async Task<WpMedia> UploadFeaturedImageAsync(
         UploadedImage image, List<int> uploadedMediaIds, CancellationToken ct)
     {
         ProcessedImage processed = images.ProcessFeatured(image.Bytes);
@@ -181,7 +188,7 @@ public sealed class ArticlePublisher(
             uploadedMediaIds.Add(media.Id);
         }
 
-        return media.Id;
+        return media;
     }
 
     /// <summary>
