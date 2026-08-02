@@ -31,17 +31,25 @@ public sealed class ImageProcessor
         return Encode(image, ArticleFormat.FeaturedMaxBytes);
     }
 
-    /// <summary>Resized so the long side is at most 2048px, aspect preserved, never upscaled.</summary>
+    /// <summary>
+    /// Fit within a 1200x900 box, aspect preserved, never upscaled. Bounding
+    /// both dimensions (not just the long side) matters for portrait shots:
+    /// capping only the long side still let a tall phone photo keep its full
+    /// ~1536px width, so it rendered far taller than any landscape image on
+    /// the site and dominated the article ("smeared" down the page).
+    /// </summary>
     public ProcessedImage ProcessBody(byte[] input)
     {
         using Image image = Image.Load(input);
         image.Mutate(x => x.AutoOrient());
 
-        int longSide = Math.Max(image.Width, image.Height);
-        if (longSide > ArticleFormat.BodyImageMaxLongSide)
+        if (image.Width > ArticleFormat.BodyImageMaxWidth || image.Height > ArticleFormat.BodyImageMaxHeight)
         {
-            double scale = (double)ArticleFormat.BodyImageMaxLongSide / longSide;
-            image.Mutate(x => x.Resize((int)(image.Width * scale), (int)(image.Height * scale)));
+            image.Mutate(x => x.Resize(new ResizeOptions
+            {
+                Size = new Size(ArticleFormat.BodyImageMaxWidth, ArticleFormat.BodyImageMaxHeight),
+                Mode = ResizeMode.Max,
+            }));
         }
 
         return Encode(image, ArticleFormat.BodyImageMaxBytes);

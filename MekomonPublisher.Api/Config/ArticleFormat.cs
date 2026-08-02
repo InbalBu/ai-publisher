@@ -40,7 +40,8 @@ public static class ArticleFormat
     public const int FeaturedWidth = 1200;
     public const int FeaturedHeight = 800;
     public const int FeaturedMaxBytes = 150_000;
-    public const int BodyImageMaxLongSide = 2048;
+    public const int BodyImageMaxWidth = 1200;
+    public const int BodyImageMaxHeight = 900;
     public const int BodyImageMaxBytes = 500_000;
     public const int JpegQuality = 82;
 }
