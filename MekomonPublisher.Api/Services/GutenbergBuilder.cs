@@ -186,7 +186,12 @@ public static class GutenbergBuilder
           .Append(",\"height\":").Append(image.Height)
           .Append(",\"sizeSlug\":\"large\",\"linkDestination\":\"none\"} -->\n");
 
-        sb.Append("<figure class=\"wp-block-image size-large\"><img src=\"")
+        // Core's image block save() adds "is-resized" to the figure whenever
+        // width/height are set (they're sourced straight from the <img>'s own
+        // HTML attributes, not the JSON comment). Omitting it here made the
+        // editor's re-render disagree with what was saved, which is exactly
+        // what "Block contains unexpected or invalid content" checks for.
+        sb.Append("<figure class=\"wp-block-image size-large is-resized\"><img src=\"")
           .Append(WebUtility.HtmlEncode(image.Url))
           .Append("\" alt=\"")
           .Append(WebUtility.HtmlEncode(image.AltText))
