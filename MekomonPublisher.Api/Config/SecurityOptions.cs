@@ -17,4 +17,13 @@ public sealed class SecurityOptions
     /// variable in production.
     /// </summary>
     public string OperatorPasswordHash { get; set; } = "";
+
+    /// <summary>
+    /// Produced by <c>dotnet run -- generate-dp-key</c>. Pins the login
+    /// cookie's encryption key to one fixed value so it survives container
+    /// restarts on hosts with no persistent disk (see Program.cs). Leave
+    /// unset for local dev, where the file-system key ring already persists
+    /// fine across restarts.
+    /// </summary>
+    public string DataProtectionKeyXml { get; set; } = "";
 }

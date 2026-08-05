@@ -2,16 +2,20 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
+using System.Xml.Linq;
 using MekomonPublisher.Api.Config;
 using MekomonPublisher.Api.Data;
 using MekomonPublisher.Api.Models;
 using MekomonPublisher.Api.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 // `dotnet run -- hash-password <password>` prints a hash and exits, never
@@ -26,6 +30,28 @@ if (args is ["hash-password", var passwordToHash])
     return;
 }
 
+// `dotnet run -- generate-dp-key` prints one Data Protection key as an XML
+// blob and exits. Put the printed value verbatim into the
+// Security:DataProtectionKeyXml env var in production (Security__DataProtectionKeyXml
+// on Render). Generate this once and never regenerate it casually - doing so
+// invalidates every previously-issued login cookie, same as the bug this exists
+// to fix.
+if (args is ["generate-dp-key"])
+{
+    var repo = new CapturingXmlRepository();
+    ServiceProvider keyGenServices = new ServiceCollection()
+        .AddDataProtection()
+        .AddKeyManagementOptions(o => o.XmlRepository = repo)
+        .Services
+        .BuildServiceProvider();
+
+    keyGenServices.GetRequiredService<IKeyManager>()
+        .CreateNewKey(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddYears(50));
+
+    Console.WriteLine(repo.Captured!.ToString(SaveOptions.DisableFormatting));
+    return;
+}
+
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<GeminiOptions>(builder.Configuration.GetSection(GeminiOptions.SectionName));
@@ -35,6 +61,33 @@ builder.Services.Configure<SecurityOptions>(builder.Configuration.GetSection(Sec
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("Default")
         ?? "Data Source=App_Data/mekomon-publisher.db"));
+
+// Without this, the auth cookie's encryption key ring lives only in the
+// current container's memory/ephemeral disk. On a host with no persistent
+// disk (this app's Render plan), every restart - a redeploy, a health-check
+// restart, or the free tier simply spinning down after idle and waking back
+// up - recreates the filesystem from scratch, generates a brand new key ring,
+// and every already-issued login cookie stops decrypting: the operator gets
+// bounced with a bare 401 on their very next request, mid-article, for no
+// visible reason. An environment variable is the one thing that does survive
+// all of those, so when Security:DataProtectionKeyXml is set (see
+// `dotnet run -- generate-dp-key`), pin the key ring to that single fixed key
+// instead of trying to persist a rotating one to a disk that won't be there
+// next time. Falls back to file-system persistence for local dev, where the
+// disk really is persistent.
+string? keyXml = builder.Configuration["Security:DataProtectionKeyXml"];
+IDataProtectionBuilder dataProtection = builder.Services.AddDataProtection().SetApplicationName("MekomonPublisher");
+
+if (!string.IsNullOrWhiteSpace(keyXml))
+{
+    dataProtection
+        .AddKeyManagementOptions(o => o.XmlRepository = new FixedKeyXmlRepository(XElement.Parse(keyXml)))
+        .DisableAutomaticKeyGeneration();
+}
+else
+{
+    dataProtection.PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, "App_Data", "keys")));
+}
 
 builder.Services.AddSingleton<ImageProcessor>();
 builder.Services.AddScoped<ArticlePublisher>();
