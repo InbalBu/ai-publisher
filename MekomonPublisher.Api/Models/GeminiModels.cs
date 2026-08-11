@@ -63,3 +63,27 @@ public sealed class ImagePlacement
     [JsonPropertyName("altText")]
     public string AltText { get; set; } = "";
 }
+
+/// <summary>
+/// The union bounding box of every human face Gemini found in the featured
+/// image, normalized to the 0..1 range (0,0 top-left, 1,1 bottom-right).
+/// Used to steer <see cref="Services.ImageProcessor.ProcessFeatured"/>'s crop
+/// so it never trims into a face; not persisted or sent to WordPress.
+/// </summary>
+public sealed class FaceDetectionResult
+{
+    [JsonPropertyName("hasFaces")]
+    public bool HasFaces { get; set; }
+
+    [JsonPropertyName("xMin")]
+    public double XMin { get; set; }
+
+    [JsonPropertyName("yMin")]
+    public double YMin { get; set; }
+
+    [JsonPropertyName("xMax")]
+    public double XMax { get; set; }
+
+    [JsonPropertyName("yMax")]
+    public double YMax { get; set; }
+}

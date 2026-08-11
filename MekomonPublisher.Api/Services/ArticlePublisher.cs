@@ -180,7 +180,8 @@ public sealed class ArticlePublisher(
     private async Task<WpMedia> UploadFeaturedImageAsync(
         UploadedImage image, List<int> uploadedMediaIds, CancellationToken ct)
     {
-        ProcessedImage processed = images.ProcessFeatured(image.Bytes);
+        FaceDetectionResult? faceRegion = await gemini.DetectFaceRegionAsync(image.Bytes, ct);
+        ProcessedImage processed = images.ProcessFeatured(image.Bytes, faceRegion);
         WpMedia media = await wordPress.UploadMediaAsync(processed.Bytes, $"featured-{Guid.NewGuid():N}.jpg", ct);
 
         lock (uploadedMediaIds)

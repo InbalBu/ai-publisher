@@ -61,6 +61,120 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
         throw new InvalidOperationException($"Gemini returned an unusable response after 2 attempts: {lastError}");
     }
 
+    /// <summary>
+    /// Finds the union bounding box of any human faces in the featured image,
+    /// so <see cref="ImageProcessor.ProcessFeatured"/> can crop around them
+    /// instead of blindly cropping to center. This is a nice-to-have on top
+    /// of a normal publish, not a required step: any failure here (bad
+    /// config, timeout, malformed response, no faces found) returns null and
+    /// the caller falls back to its existing center-crop behavior rather than
+    /// failing the whole publish over a face-framing detail.
+    /// </summary>
+    public async Task<FaceDetectionResult?> DetectFaceRegionAsync(byte[] imageBytes, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_options.ApiKey) || string.IsNullOrWhiteSpace(_options.Model))
+        {
+            return null;
+        }
+
+        var body = new JsonObject
+        {
+            ["contents"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["parts"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["text"] = "Does this photo contain one or more human faces? If yes, return the " +
+                                "smallest bounding box that fully contains every face, including hair and chin " +
+                                "- add a small margin so a crop just outside the box still keeps every face " +
+                                "whole. Coordinates are normalized 0 to 1, (0,0) is the top-left corner and " +
+                                "(1,1) is the bottom-right corner. If there are no human faces, set hasFaces to " +
+                                "false and leave the coordinates at 0.",
+                        },
+                        new JsonObject
+                        {
+                            ["inline_data"] = new JsonObject
+                            {
+                                ["mime_type"] = "image/jpeg",
+                                ["data"] = Convert.ToBase64String(imageBytes),
+                            },
+                        },
+                    },
+                },
+            },
+            ["generationConfig"] = new JsonObject
+            {
+                ["temperature"] = 0,
+                ["maxOutputTokens"] = 256,
+                ["responseMimeType"] = "application/json",
+                ["responseSchema"] = new JsonObject
+                {
+                    ["type"] = "object",
+                    ["properties"] = new JsonObject
+                    {
+                        ["hasFaces"] = new JsonObject { ["type"] = "boolean" },
+                        ["xMin"] = new JsonObject { ["type"] = "number" },
+                        ["yMin"] = new JsonObject { ["type"] = "number" },
+                        ["xMax"] = new JsonObject { ["type"] = "number" },
+                        ["yMax"] = new JsonObject { ["type"] = "number" },
+                    },
+                    ["required"] = new JsonArray { "hasFaces", "xMin", "yMin", "xMax", "yMax" },
+                },
+            },
+        };
+
+        string url = $"https://generativelanguage.googleapis.com/v1beta/models/{_options.Model}:generateContent?key={_options.ApiKey}";
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+
+            // Short and separate from the article-generation timeout: this is
+            // a small, single-purpose call, and a slow response here should
+            // never be allowed to eat into the budget of the actual article
+            // generation running alongside it.
+            using CancellationTokenSource timeoutCts = new(TimeSpan.FromSeconds(20));
+            using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+
+            HttpResponseMessage response = await http.SendAsync(request, linkedCts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            string responseBody = await response.Content.ReadAsStringAsync(ct);
+            using JsonDocument doc = JsonDocument.Parse(responseBody);
+            string? text = doc.RootElement
+                .GetProperty("candidates")[0]
+                .GetProperty("content")
+                .GetProperty("parts")[0]
+                .GetProperty("text")
+                .GetString();
+
+            if (text is null)
+            {
+                return null;
+            }
+
+            FaceDetectionResult? result = JsonSerializer.Deserialize<FaceDetectionResult>(text, JsonOptions);
+            return result is { HasFaces: true } ? result : null;
+        }
+        catch (Exception) when (ct.IsCancellationRequested is false)
+        {
+            // Covers HttpRequestException, JsonException, the operation-canceled
+            // from this method's own timeout, and any schema-shape surprise -
+            // all fall back to the existing center-crop behavior.
+            return null;
+        }
+    }
+
     private async Task<string> CallGeminiAsync(string prompt, CancellationToken ct)
     {
         var body = new JsonObject
