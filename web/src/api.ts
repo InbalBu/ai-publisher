@@ -59,6 +59,11 @@ export interface PublishArgs {
   images: File[]
   /** One entry per image, same order, '' where the operator left the credit blank. */
   captions: string[]
+  /** false: title/subtitle come from the operator and the body is not rewritten. */
+  useAi: boolean
+  /** Required, and used, only when useAi is false. */
+  title?: string
+  subtitle?: string
 }
 
 export async function publishArticle(args: PublishArgs): Promise<PublishResult> {
@@ -67,6 +72,9 @@ export async function publishArticle(args: PublishArgs): Promise<PublishResult> 
   form.set('categoryId', String(args.categoryId))
   form.set('status', args.status)
   form.set('featuredImageIndex', String(args.featuredImageIndex))
+  form.set('useAi', String(args.useAi))
+  form.set('title', args.title ?? '')
+  form.set('subtitle', args.subtitle ?? '')
   for (let i = 0; i < args.images.length; i++) {
     form.append('images', args.images[i], args.images[i].name)
     // Appended in lockstep with the file above; the server zips them by index.

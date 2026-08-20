@@ -10,6 +10,24 @@ public sealed class PublishRequest
     /// <summary>Either "publish" or "draft".</summary>
     public required string Status { get; init; }
 
+    /// <summary>
+    /// True (the default): Gemini rewrites <see cref="RawText"/> into the
+    /// site's house style, picks the title/subtitle, and decides image
+    /// placement. False: nothing is AI-generated - <see cref="Title"/> and
+    /// <see cref="Subtitle"/> come from the operator and RawText is split
+    /// into paragraphs mechanically. Either way the same
+    /// <see cref="Models.GeneratedArticle"/> shape reaches
+    /// <see cref="Services.GutenbergBuilder"/>, so publishing itself is
+    /// identical downstream.
+    /// </summary>
+    public required bool UseAi { get; init; }
+
+    /// <summary>Required, and used, only when <see cref="UseAi"/> is false.</summary>
+    public string? Title { get; init; }
+
+    /// <summary>Required, and used, only when <see cref="UseAi"/> is false.</summary>
+    public string? Subtitle { get; init; }
+
     /// <summary>Index into <see cref="Images"/> of the one to use as the featured image.</summary>
     public required int FeaturedImageIndex { get; init; }
 

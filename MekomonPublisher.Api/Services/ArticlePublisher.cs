@@ -31,8 +31,12 @@ public sealed class ArticlePublisher(
             // Started together, not sequentially: image encoding and upload do not
             // need Gemini's output for bytes, only for alt text, which is patched
             // on afterwards. This overlap is most of where the speed comes from.
-            Task<GeneratedArticle> generationTask = gemini.GenerateAsync(
-                request.RawText, categoryName, request.Images.Count, ct);
+            // When UseAi is false there is nothing to await concurrently, but the
+            // shape stays a Task so every line below - image alt text merging,
+            // GutenbergBuilder.Build, tag resolution - is identical either way.
+            Task<GeneratedArticle> generationTask = request.UseAi
+                ? gemini.GenerateAsync(request.RawText, categoryName, request.Images.Count, ct)
+                : Task.FromResult(BuildManualArticle(request));
 
             Task<GutenbergBuilder.ImageInfo>[] bodyUploadTasks = request.Images
                 .Select(image => UploadBodyImageAsync(image, uploadedMediaIds, ct))
@@ -152,6 +156,95 @@ public sealed class ArticlePublisher(
         {
             throw new InvalidOperationException("Featured image index is out of range.");
         }
+
+        if (!request.UseAi &&
+            (string.IsNullOrWhiteSpace(request.Title) || string.IsNullOrWhiteSpace(request.Subtitle)))
+        {
+            throw new InvalidOperationException("Title and subtitle are required when AI generation is off.");
+        }
+    }
+
+    /// <summary>
+    /// The no-AI equivalent of <see cref="GeminiService.GenerateAsync"/>: builds
+    /// the same <see cref="GeneratedArticle"/> shape entirely mechanically, from
+    /// what the operator actually typed, so nothing downstream needs to know
+    /// which path produced it. Title/subtitle are the operator's own words;
+    /// the body is RawText split into paragraphs as-is, with no rewriting; tags
+    /// are left empty (nothing infers topical tags without AI - the boilerplate
+    /// tags every article gets are added separately, unaffected by this).
+    /// </summary>
+    private static GeneratedArticle BuildManualArticle(PublishRequest request)
+    {
+        List<ArticleBlock> blocks = SplitIntoParagraphBlocks(request.RawText);
+
+        var article = new GeneratedArticle
+        {
+            Title = request.Title!.Trim(),
+            Subtitle = request.Subtitle!.Trim(),
+            Blocks = blocks,
+            ImagePlacements = BuildEvenImagePlacements(request.Images.Count, blocks.Count),
+            FocusKeyword = "",
+            SeoTitle = request.Title.Trim(),
+            MetaDescription = request.Subtitle.Trim(),
+            Tags = [],
+        };
+
+        // Same Hebrew/ASCII sweep and title length cap the AI path gets -
+        // operator-typed text is just as capable of carrying a stray
+        // character or an over-length title as generated text is.
+        TextSanitizer.Clean(article);
+        return article;
+    }
+
+    /// <summary>
+    /// Splits on blank lines first (the normal case for pasted, already-
+    /// paragraphed text); falls back to single line breaks when the raw text
+    /// has none, so a wall of single-newline-separated lines still becomes
+    /// multiple blocks instead of one giant paragraph.
+    /// </summary>
+    private static List<ArticleBlock> SplitIntoParagraphBlocks(string rawText)
+    {
+        string[] paragraphs = System.Text.RegularExpressions.Regex.Split(rawText.Trim(), @"\r?\n\s*\r?\n")
+            .Select(p => p.Trim())
+            .Where(p => p.Length > 0)
+            .ToArray();
+
+        if (paragraphs.Length <= 1)
+        {
+            paragraphs = rawText.Split('\n')
+                .Select(p => p.Trim())
+                .Where(p => p.Length > 0)
+                .ToArray();
+        }
+
+        return paragraphs.Select(p => new ArticleBlock { Type = "paragraph", Html = p }).ToList();
+    }
+
+    /// <summary>
+    /// Images 0 and 1 are placed automatically as the lead and second image by
+    /// <see cref="GutenbergBuilder"/> regardless of AfterBlockIndex, exactly as
+    /// in the AI path. Images 2 and up (roaming) are spread evenly across the
+    /// body blocks instead of an AI judgment call on where they fit best.
+    /// </summary>
+    private static List<ImagePlacement> BuildEvenImagePlacements(int imageCount, int blockCount)
+    {
+        var placements = new List<ImagePlacement>();
+        int roamingCount = Math.Max(0, imageCount - 2);
+
+        for (var i = 0; i < imageCount; i++)
+        {
+            int afterBlockIndex = 0;
+            if (i >= 2 && blockCount > 0)
+            {
+                int roamingIndex = i - 2;
+                afterBlockIndex = (int)Math.Round((roamingIndex + 1) * (double)blockCount / (roamingCount + 1));
+                afterBlockIndex = Math.Clamp(afterBlockIndex, 0, blockCount);
+            }
+
+            placements.Add(new ImagePlacement { ImageIndex = i, AfterBlockIndex = afterBlockIndex, AltText = "" });
+        }
+
+        return placements;
     }
 
     /// <summary>

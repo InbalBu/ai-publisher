@@ -5,10 +5,12 @@ import {
   Button,
   CircularProgress,
   Container,
+  FormControlLabel,
   IconButton,
   MenuItem,
   Paper,
   Radio,
+  RadioGroup,
   Stack,
   TextField,
   Typography,
@@ -29,6 +31,9 @@ function App() {
   const [session, setSession] = useState<{ username: string } | null | undefined>(undefined)
   const [categories, setCategories] = useState<Category[]>([])
   const [rawText, setRawText] = useState('')
+  const [useAi, setUseAi] = useState(true)
+  const [title, setTitle] = useState('')
+  const [subtitle, setSubtitle] = useState('')
   const [categoryId, setCategoryId] = useState<number | ''>('')
   const [images, setImages] = useState<ImageEntry[]>([])
   const [featuredIndex, setFeaturedIndex] = useState(0)
@@ -76,7 +81,12 @@ function App() {
     })
   }
 
-  const canSubmit = rawText.trim().length >= 50 && categoryId !== '' && images.length > 0 && submitting === null
+  const canSubmit =
+    rawText.trim().length >= 50 &&
+    categoryId !== '' &&
+    images.length > 0 &&
+    submitting === null &&
+    (useAi || (title.trim().length > 0 && subtitle.trim().length > 0))
 
   async function handleSubmit(status: 'publish' | 'draft') {
     if (!canSubmit) return
@@ -91,6 +101,9 @@ function App() {
         featuredImageIndex: featuredIndex,
         images: images.map((i) => i.file),
         captions: images.map((i) => i.caption),
+        useAi,
+        title,
+        subtitle,
       })
       setResult(outcome)
     } catch (err) {
@@ -150,6 +163,39 @@ function App() {
             onChange={(e) => setRawText(e.target.value)}
             fullWidth
           />
+
+          <Box>
+            <Typography variant="body2" sx={{ mb: 0.5 }}>
+              עיבוד הכתבה
+            </Typography>
+            <RadioGroup
+              row
+              value={useAi ? 'ai' : 'manual'}
+              onChange={(e) => setUseAi(e.target.value === 'ai')}
+            >
+              <FormControlLabel value="ai" control={<Radio />} label="עם AI" />
+              <FormControlLabel value="manual" control={<Radio />} label="בלי AI" />
+            </RadioGroup>
+          </Box>
+
+          {!useAi && (
+            <>
+              <TextField
+                label="כותרת ראשית"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                fullWidth
+              />
+              <TextField
+                label="כותרת משנה"
+                multiline
+                minRows={2}
+                value={subtitle}
+                onChange={(e) => setSubtitle(e.target.value)}
+                fullWidth
+              />
+            </>
+          )}
 
           <TextField
             select

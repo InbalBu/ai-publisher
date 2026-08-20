@@ -301,6 +301,11 @@ app.MapPost("/api/publish", async (HttpRequest request, ArticlePublisher publish
         Status = form["status"].ToString(),
         FeaturedImageIndex = featuredImageIndex,
         Images = images,
+        // Missing/unparseable defaults to true so older clients (and any
+        // request that simply omits the field) keep today's AI behavior.
+        UseAi = !bool.TryParse(form["useAi"], out bool useAi) || useAi,
+        Title = form["title"].ToString(),
+        Subtitle = form["subtitle"].ToString(),
     };
 
     PublishResult result = await publisher.PublishAsync(publishRequest, ct);
