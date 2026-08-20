@@ -1,18 +1,23 @@
 import { useEffect, useState } from 'react'
+import type { DragEvent } from 'react'
 import {
   Alert,
+  AppBar,
   Box,
   Button,
+  Chip,
   CircularProgress,
+  Collapse,
   Container,
-  FormControlLabel,
   IconButton,
+  LinearProgress,
   MenuItem,
   Paper,
-  Radio,
-  RadioGroup,
   Stack,
   TextField,
+  Toolbar,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from '@mui/material'
 import { checkSession, fetchCategories, logout, publishArticle } from './api'
@@ -26,6 +31,29 @@ interface ImageEntry {
   caption: string
 }
 
+const MIN_RAW_TEXT_LENGTH = 50
+
+/** A small uppercase label with an accent bar, used to separate the form into scannable steps. */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <Typography
+      variant="overline"
+      sx={{
+        display: 'block',
+        fontWeight: 700,
+        color: 'primary.main',
+        letterSpacing: 0.5,
+        borderInlineStart: '3px solid',
+        borderColor: 'primary.main',
+        pl: 1.25,
+        mb: 1,
+      }}
+    >
+      {children}
+    </Typography>
+  )
+}
+
 function App() {
   // undefined = still checking, null = not logged in, object = logged in
   const [session, setSession] = useState<{ username: string } | null | undefined>(undefined)
@@ -37,6 +65,7 @@ function App() {
   const [categoryId, setCategoryId] = useState<number | ''>('')
   const [images, setImages] = useState<ImageEntry[]>([])
   const [featuredIndex, setFeaturedIndex] = useState(0)
+  const [dragOver, setDragOver] = useState(false)
   const [submitting, setSubmitting] = useState<'publish' | 'draft' | null>(null)
   const [result, setResult] = useState<PublishResult | null>(null)
 
@@ -58,12 +87,20 @@ function App() {
 
   function addImages(fileList: FileList | null) {
     if (!fileList) return
-    const added = Array.from(fileList).map((file) => ({
-      file,
-      previewUrl: URL.createObjectURL(file),
-      caption: '',
-    }))
+    const added = Array.from(fileList)
+      .filter((file) => file.type.startsWith('image/'))
+      .map((file) => ({
+        file,
+        previewUrl: URL.createObjectURL(file),
+        caption: '',
+      }))
     setImages((prev) => [...prev, ...added])
+  }
+
+  function handleDrop(e: DragEvent<HTMLLabelElement>) {
+    e.preventDefault()
+    setDragOver(false)
+    addImages(e.dataTransfer.files)
   }
 
   function updateCaption(index: number, caption: string) {
@@ -82,7 +119,7 @@ function App() {
   }
 
   const canSubmit =
-    rawText.trim().length >= 50 &&
+    rawText.trim().length >= MIN_RAW_TEXT_LENGTH &&
     categoryId !== '' &&
     images.length > 0 &&
     submitting === null &&
@@ -135,172 +172,348 @@ function App() {
   }
 
   return (
-    <Container maxWidth="md" sx={{ py: 5 }}>
-      <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-        <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 0 }}>
-          פרסום כתבה
-        </Typography>
-        <Stack direction="row" sx={{ alignItems: 'center' }} spacing={1}>
-          <Typography variant="body2" color="text.secondary">
-            {session.username}
+    <Box sx={{ minHeight: '100dvh', bgcolor: 'background.default', pb: { xs: 10, sm: 4 } }}>
+      <AppBar
+        position="sticky"
+        elevation={0}
+        sx={{
+          background: 'linear-gradient(135deg, #1a56db 0%, #1741a6 100%)',
+        }}
+      >
+        <Toolbar sx={{ gap: 1, flexWrap: 'wrap', py: 1 }}>
+          <Typography variant="h6" component="h1" sx={{ fontWeight: 700, flexGrow: 1 }}>
+            פרסום כתבה
           </Typography>
-          <Button size="small" onClick={handleLogout}>
+          <Chip
+            size="small"
+            label={session.username}
+            sx={{ bgcolor: 'rgba(255,255,255,0.15)', color: 'common.white', fontWeight: 600 }}
+          />
+          <Button size="small" onClick={handleLogout} sx={{ color: 'common.white' }}>
             התנתקות
           </Button>
-        </Stack>
-      </Stack>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        הדביקו טקסט גולמי, בחרו קטגוריה, העלו תמונות וסמנו תמונה ראשית.
-      </Typography>
+        </Toolbar>
+      </AppBar>
 
-      <Paper sx={{ p: 3 }}>
-        <Stack spacing={3}>
-          <TextField
-            label="טקסט הכתבה"
-            multiline
-            minRows={10}
-            value={rawText}
-            onChange={(e) => setRawText(e.target.value)}
-            fullWidth
-          />
+      <Container maxWidth="md" sx={{ pt: { xs: 2, sm: 3 } }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          הדביקו טקסט גולמי, בחרו קטגוריה, העלו תמונות וסמנו תמונה ראשית.
+        </Typography>
 
-          <Box>
-            <Typography variant="body2" sx={{ mb: 0.5 }}>
-              עיבוד הכתבה
-            </Typography>
-            <RadioGroup
-              row
-              value={useAi ? 'ai' : 'manual'}
-              onChange={(e) => setUseAi(e.target.value === 'ai')}
-            >
-              <FormControlLabel value="ai" control={<Radio />} label="עם AI" />
-              <FormControlLabel value="manual" control={<Radio />} label="בלי AI" />
-            </RadioGroup>
-          </Box>
-
-          {!useAi && (
-            <>
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2, sm: 3 },
+            border: '1px solid',
+            borderColor: 'divider',
+            boxShadow: '0 8px 24px rgba(20, 40, 90, 0.06)',
+          }}
+        >
+          <Stack spacing={3.5}>
+            <Box>
+              <SectionLabel>טקסט הכתבה</SectionLabel>
               <TextField
-                label="כותרת ראשית"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                fullWidth
-              />
-              <TextField
-                label="כותרת משנה"
+                placeholder="הדביקו כאן את הטקסט הגולמי של הכתבה..."
                 multiline
-                minRows={2}
-                value={subtitle}
-                onChange={(e) => setSubtitle(e.target.value)}
+                minRows={8}
+                value={rawText}
+                onChange={(e) => setRawText(e.target.value)}
                 fullWidth
               />
-            </>
-          )}
+              <Typography
+                variant="caption"
+                sx={{ display: 'block', textAlign: 'end', mt: 0.5 }}
+                color={rawText.trim().length >= MIN_RAW_TEXT_LENGTH ? 'success.main' : 'text.secondary'}
+              >
+                {rawText.trim().length} / {MIN_RAW_TEXT_LENGTH} תווים לפחות
+              </Typography>
+            </Box>
 
-          <TextField
-            select
-            label="קטגוריה"
-            value={categoryId}
-            onChange={(e) => setCategoryId(Number(e.target.value))}
-            fullWidth
-          >
-            {categories.map((c) => (
-              <MenuItem key={c.id} value={c.id}>
-                {c.name}
-              </MenuItem>
-            ))}
-          </TextField>
-
-          <Box>
-            <Button component="label" variant="outlined">
-              העלאת תמונות
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={(e) => addImages(e.target.files)}
-              />
-            </Button>
-
-            {images.length > 0 && (
-              <Box
-                sx={{
-                  mt: 2,
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                  gap: 2,
+            <Box>
+              <SectionLabel>עיבוד הכתבה</SectionLabel>
+              <ToggleButtonGroup
+                value={useAi ? 'ai' : 'manual'}
+                exclusive
+                fullWidth
+                onChange={(_, value) => {
+                  if (value) setUseAi(value === 'ai')
                 }}
               >
-                {images.map((image, index) => (
-                  <Paper key={image.previewUrl} variant="outlined" sx={{ p: 1, textAlign: 'center' }}>
-                    <Box
-                      component="img"
-                      src={image.previewUrl}
-                      alt=""
-                      sx={{ width: '100%', height: 100, objectFit: 'cover', borderRadius: 1 }}
-                    />
-                    <Stack
-                      direction="row"
-                      sx={{ mt: 0.5, alignItems: 'center', justifyContent: 'space-between' }}
-                    >
-                      <Stack direction="row" sx={{ alignItems: 'center' }}>
-                        <Radio
-                          size="small"
-                          checked={featuredIndex === index}
-                          onChange={() => setFeaturedIndex(index)}
-                        />
-                        <Typography variant="caption">ראשית</Typography>
-                      </Stack>
-                      <IconButton size="small" onClick={() => removeImage(index)} aria-label="הסרת תמונה">
-                        ✕
-                      </IconButton>
-                    </Stack>
-                    <TextField
-                      size="small"
-                      fullWidth
-                      placeholder="קרדיט לתמונה (אופציונלי)"
-                      value={image.caption}
-                      onChange={(e) => updateCaption(index, e.target.value)}
-                      sx={{ mt: 1 }}
-                    />
-                  </Paper>
+                <ToggleButton value="ai" sx={{ py: 1.25 }}>
+                  ✨ עם AI
+                </ToggleButton>
+                <ToggleButton value="manual" sx={{ py: 1.25 }}>
+                  ✍️ בלי AI
+                </ToggleButton>
+              </ToggleButtonGroup>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                {useAi
+                  ? 'ה-AI ינסח מחדש, ייצור כותרת ויחלק לפסקאות אוטומטית.'
+                  : 'הטקסט יפורסם כפי שהוא, מחולק לפסקאות. הכותרות שלכם.'}
+              </Typography>
+            </Box>
+
+            <Collapse in={!useAi} unmountOnExit>
+              <Stack spacing={2}>
+                <TextField
+                  label="כותרת ראשית"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  fullWidth
+                />
+                <TextField
+                  label="כותרת משנה"
+                  multiline
+                  minRows={2}
+                  value={subtitle}
+                  onChange={(e) => setSubtitle(e.target.value)}
+                  fullWidth
+                />
+              </Stack>
+            </Collapse>
+
+            <Box>
+              <SectionLabel>קטגוריה</SectionLabel>
+              <TextField
+                select
+                value={categoryId}
+                onChange={(e) => setCategoryId(Number(e.target.value))}
+                fullWidth
+                slotProps={{ select: { displayEmpty: true } }}
+              >
+                <MenuItem value="" disabled>
+                  <Typography component="span" color="text.secondary">
+                    בחרו קטגוריה
+                  </Typography>
+                </MenuItem>
+                {categories.map((c) => (
+                  <MenuItem key={c.id} value={c.id}>
+                    {c.name}
+                  </MenuItem>
                 ))}
+              </TextField>
+            </Box>
+
+            <Box>
+              <SectionLabel>תמונות</SectionLabel>
+
+              <Box
+                component="label"
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setDragOver(true)
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                sx={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 0.5,
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  borderRadius: 3,
+                  border: '2px dashed',
+                  borderColor: dragOver ? 'primary.main' : 'divider',
+                  bgcolor: dragOver ? 'action.hover' : 'transparent',
+                  py: 3,
+                  px: 2,
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <Typography variant="h5" component="span">
+                  📷
+                </Typography>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  לחצו להעלאת תמונות או גררו אותן לכאן
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  ניתן לבחור כמה תמונות יחד
+                </Typography>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  hidden
+                  onChange={(e) => addImages(e.target.files)}
+                />
               </Box>
-            )}
-          </Box>
 
-          <Stack direction="row" spacing={2}>
-            <Button variant="outlined" disabled={!canSubmit} onClick={() => handleSubmit('draft')}>
-              {submitting === 'draft' ? 'שומר טיוטה...' : 'שמירת טיוטה'}
-            </Button>
-            <Button variant="contained" disabled={!canSubmit} onClick={() => handleSubmit('publish')}>
-              {submitting === 'publish' ? 'מפרסם...' : 'פרסום'}
-            </Button>
-          </Stack>
-        </Stack>
-      </Paper>
-
-      {result && (
-        <Alert severity={result.success ? 'success' : 'error'} sx={{ mt: 3 }}>
-          {result.success ? (
-            <>
-              פורסם בהצלחה: <strong>{result.title}</strong> ({(result.elapsedMs / 1000).toFixed(1)} שניות)
-              {result.url && (
-                <>
-                  {' - '}
-                  <a href={result.url} target="_blank" rel="noreferrer">
-                    צפייה בכתבה
-                  </a>
-                </>
+              {images.length > 0 && (
+                <Box
+                  sx={{
+                    mt: 2,
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                    gap: 1.5,
+                  }}
+                >
+                  {images.map((image, index) => {
+                    const isFeatured = featuredIndex === index
+                    return (
+                      <Paper
+                        key={image.previewUrl}
+                        variant="outlined"
+                        sx={{
+                          overflow: 'hidden',
+                          borderRadius: 2.5,
+                          borderColor: isFeatured ? 'primary.main' : 'divider',
+                          borderWidth: isFeatured ? 2 : 1,
+                        }}
+                      >
+                        <Box sx={{ position: 'relative' }}>
+                          <Box
+                            component="img"
+                            src={image.previewUrl}
+                            alt=""
+                            onClick={() => setFeaturedIndex(index)}
+                            sx={{
+                              width: '100%',
+                              height: 110,
+                              objectFit: 'cover',
+                              display: 'block',
+                              cursor: 'pointer',
+                            }}
+                          />
+                          <Chip
+                            size="small"
+                            label="ראשית"
+                            onClick={() => setFeaturedIndex(index)}
+                            color={isFeatured ? 'primary' : 'default'}
+                            sx={{
+                              position: 'absolute',
+                              insetInlineStart: 6,
+                              bottom: 6,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              opacity: isFeatured ? 1 : 0.85,
+                            }}
+                          />
+                          <IconButton
+                            size="small"
+                            onClick={() => removeImage(index)}
+                            aria-label="הסרת תמונה"
+                            sx={{
+                              position: 'absolute',
+                              insetInlineEnd: 4,
+                              top: 4,
+                              bgcolor: 'rgba(0,0,0,0.55)',
+                              color: 'common.white',
+                              '&:hover': { bgcolor: 'rgba(0,0,0,0.75)' },
+                              width: 26,
+                              height: 26,
+                            }}
+                          >
+                            ✕
+                          </IconButton>
+                        </Box>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          placeholder="קרדיט לתמונה (אופציונלי)"
+                          value={image.caption}
+                          onChange={(e) => updateCaption(index, e.target.value)}
+                          variant="standard"
+                          sx={{ px: 1, py: 0.5 }}
+                        />
+                      </Paper>
+                    )
+                  })}
+                </Box>
               )}
-            </>
-          ) : (
-            <>הפרסום נכשל: {result.error}</>
-          )}
-        </Alert>
+            </Box>
+          </Stack>
+        </Paper>
+
+        {result && (
+          <Alert severity={result.success ? 'success' : 'error'} sx={{ mt: 3, borderRadius: 2.5 }}>
+            {result.success ? (
+              <>
+                פורסם בהצלחה: <strong>{result.title}</strong> ({(result.elapsedMs / 1000).toFixed(1)} שניות)
+                {result.url && (
+                  <>
+                    {' - '}
+                    <a href={result.url} target="_blank" rel="noreferrer">
+                      צפייה בכתבה
+                    </a>
+                  </>
+                )}
+              </>
+            ) : (
+              <>הפרסום נכשל: {result.error}</>
+            )}
+          </Alert>
+        )}
+
+        {/* Desktop/tablet actions live inline; the sticky bar below takes over on mobile. */}
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{ mt: 3, display: { xs: 'none', sm: 'flex' } }}
+        >
+          <Button
+            variant="outlined"
+            size="large"
+            disabled={!canSubmit}
+            onClick={() => handleSubmit('draft')}
+          >
+            {submitting === 'draft' ? 'שומר טיוטה...' : 'שמירת טיוטה'}
+          </Button>
+          <Button
+            variant="contained"
+            size="large"
+            disabled={!canSubmit}
+            onClick={() => handleSubmit('publish')}
+          >
+            {submitting === 'publish' ? 'מפרסם...' : 'פרסום'}
+          </Button>
+        </Stack>
+      </Container>
+
+      {/* Mobile: actions pinned to the bottom of the viewport so they're always one thumb-reach away, no scrolling to find them. */}
+      <Box
+        sx={{
+          display: { xs: 'flex', sm: 'none' },
+          position: 'fixed',
+          insetInline: 0,
+          bottom: 0,
+          gap: 1.5,
+          p: 1.5,
+          pb: 'calc(12px + env(safe-area-inset-bottom))',
+          bgcolor: 'background.paper',
+          borderTop: '1px solid',
+          borderColor: 'divider',
+          boxShadow: '0 -6px 20px rgba(20, 40, 90, 0.08)',
+          zIndex: (t) => t.zIndex.appBar,
+        }}
+      >
+        <Button
+          variant="outlined"
+          fullWidth
+          size="large"
+          disabled={!canSubmit}
+          onClick={() => handleSubmit('draft')}
+        >
+          {submitting === 'draft' ? 'שומר...' : 'טיוטה'}
+        </Button>
+        <Button
+          variant="contained"
+          fullWidth
+          size="large"
+          disabled={!canSubmit}
+          onClick={() => handleSubmit('publish')}
+        >
+          {submitting === 'publish' ? 'מפרסם...' : 'פרסום'}
+        </Button>
+      </Box>
+
+      {submitting && (
+        <LinearProgress
+          sx={{ position: 'fixed', insetInline: 0, top: 0, zIndex: (t) => t.zIndex.tooltip }}
+        />
       )}
-    </Container>
+    </Box>
   )
 }
 
