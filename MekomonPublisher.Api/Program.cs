@@ -39,11 +39,17 @@ if (args is ["hash-password", var passwordToHash])
 if (args is ["generate-dp-key"])
 {
     var repo = new CapturingXmlRepository();
+    // ASP0000 warns about building a second container alongside the app's
+    // real one (builder.Build()), which risks duplicate singletons. That
+    // doesn't apply here: this whole branch returns before CreateBuilder is
+    // ever reached, so this is the only ServiceProvider the process builds.
+#pragma warning disable ASP0000
     ServiceProvider keyGenServices = new ServiceCollection()
         .AddDataProtection()
         .AddKeyManagementOptions(o => o.XmlRepository = repo)
         .Services
         .BuildServiceProvider();
+#pragma warning restore ASP0000
 
     keyGenServices.GetRequiredService<IKeyManager>()
         .CreateNewKey(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddYears(50));
