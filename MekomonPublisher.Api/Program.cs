@@ -52,7 +52,21 @@ if (args is ["generate-dp-key"])
     return;
 }
 
-WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+// Render's containers hit their inotify-instance limit intermittently (the
+// exact failure the DOTNET_hostBuilder__reloadConfigOnChange env var was
+// meant to prevent) because CreateBuilder's default app configuration
+// always adds appsettings*.json with reloadOnChange:true, which spins up a
+// FileSystemWatcher per file. That default config is applied *inside*
+// CreateBuilder itself, before any of our own code runs - so it can't be
+// disabled by touching builder.Configuration afterward. The only two ways
+// to reach it in time are the DOTNET_-prefixed environment variable (set on
+// Render, but it lives in dashboard config that can be edited away or
+// missed on a fresh service) or this exact command-line switch, which the
+// host's early bootstrap config also reads before Main's body executes.
+// Baking it into the args array here means the crash can't recur just
+// because someone changes or forgets the dashboard setting.
+string[] argsWithoutConfigReload = [.. args, "--hostBuilder:reloadConfigOnChange=false"];
+WebApplicationBuilder builder = WebApplication.CreateBuilder(argsWithoutConfigReload);
 
 builder.Services.Configure<GeminiOptions>(builder.Configuration.GetSection(GeminiOptions.SectionName));
 builder.Services.Configure<WordPressOptions>(builder.Configuration.GetSection(WordPressOptions.SectionName));
