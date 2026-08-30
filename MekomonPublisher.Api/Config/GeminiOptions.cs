@@ -14,7 +14,7 @@ public sealed class GeminiOptions
     /// </summary>
     public string Model { get; set; } = "";
 
-    public int TimeoutSeconds { get; set; } = 45;
+    public int TimeoutSeconds { get; set; } = 75;
 
     public double Temperature { get; set; } = 0.4;
 }

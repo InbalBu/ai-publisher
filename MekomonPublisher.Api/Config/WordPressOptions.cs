@@ -12,7 +12,7 @@ public sealed class WordPressOptions
     /// <summary>WordPress Application Password, set via user-secrets. Never committed.</summary>
     public string ApplicationPassword { get; set; } = "";
 
-    public int RequestTimeoutSeconds { get; set; } = 15;
+    public int RequestTimeoutSeconds { get; set; } = 30;
 
-    public int MediaUploadTimeoutSeconds { get; set; } = 30;
+    public int MediaUploadTimeoutSeconds { get; set; } = 60;
 }
