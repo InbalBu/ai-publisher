@@ -22,6 +22,7 @@ import {
 } from '@mui/material'
 import { checkSession, fetchCategories, logout, publishArticle } from './api'
 import type { Category, PublishResult } from './api'
+import { clearDraft, loadDraft, saveDraft } from './draftStore'
 import LoginPage from './LoginPage'
 
 interface ImageEntry {
@@ -32,6 +33,8 @@ interface ImageEntry {
 }
 
 const MIN_RAW_TEXT_LENGTH = 50
+/** Must match ArticlePublisher.MaxRawTextLength on the server. */
+const MAX_RAW_TEXT_LENGTH = 6000
 
 /** A small uppercase label with an accent bar, used to separate the form into scannable steps. */
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -68,6 +71,9 @@ function App() {
   const [dragOver, setDragOver] = useState(false)
   const [submitting, setSubmitting] = useState<'publish' | 'draft' | null>(null)
   const [result, setResult] = useState<PublishResult | null>(null)
+  // Saving starts only after the stored draft has been read, so the empty initial
+  // state can never overwrite it.
+  const [draftLoaded, setDraftLoaded] = useState(false)
 
   useEffect(() => {
     checkSession().then(setSession).catch(() => setSession(null))
@@ -78,6 +84,44 @@ function App() {
       fetchCategories().then(setCategories).catch(() => setCategories([]))
     }
   }, [session])
+
+  useEffect(() => {
+    loadDraft().then((draft) => {
+      if (draft) {
+        setRawText(draft.rawText)
+        setUseAi(draft.useAi)
+        setTitle(draft.title)
+        setSubtitle(draft.subtitle)
+        setCategoryId(draft.categoryId)
+        setImages(
+          draft.images.map((image) => ({
+            file: image.file,
+            previewUrl: URL.createObjectURL(image.file),
+            caption: image.caption,
+          })),
+        )
+        setFeaturedIndex(draft.featuredIndex)
+      }
+      setDraftLoaded(true)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!draftLoaded) return
+    // Debounced so typing doesn't rewrite the stored images on every keystroke.
+    const timer = window.setTimeout(() => {
+      saveDraft({
+        rawText,
+        useAi,
+        title,
+        subtitle,
+        categoryId,
+        images: images.map(({ file, caption }) => ({ file, caption })),
+        featuredIndex,
+      })
+    }, 400)
+    return () => window.clearTimeout(timer)
+  }, [draftLoaded, rawText, useAi, title, subtitle, categoryId, images, featuredIndex])
 
   useEffect(() => {
     // Release object URLs on unmount only; per-change cleanup happens in removeImage.
@@ -120,10 +164,22 @@ function App() {
 
   const canSubmit =
     rawText.trim().length >= MIN_RAW_TEXT_LENGTH &&
+    rawText.length <= MAX_RAW_TEXT_LENGTH &&
     categoryId !== '' &&
     images.length > 0 &&
     submitting === null &&
     (useAi || (title.trim().length > 0 && subtitle.trim().length > 0))
+
+  function resetForm() {
+    images.forEach((image) => URL.revokeObjectURL(image.previewUrl))
+    setRawText('')
+    setUseAi(true)
+    setTitle('')
+    setSubtitle('')
+    setCategoryId('')
+    setImages([])
+    setFeaturedIndex(0)
+  }
 
   async function handleSubmit(status: 'publish' | 'draft') {
     if (!canSubmit) return
@@ -142,6 +198,12 @@ function App() {
         title,
         subtitle,
       })
+      // The article now exists on WordPress, so the saved draft has done its job.
+      // A failed submit keeps everything so the operator can retry.
+      if (outcome.success) {
+        resetForm()
+        clearDraft()
+      }
       setResult(outcome)
     } catch (err) {
       setResult({
@@ -219,14 +281,24 @@ function App() {
                 value={rawText}
                 onChange={(e) => setRawText(e.target.value)}
                 fullWidth
+                // Hard stop: typing and pasting both get cut at the limit, so the text can never go over.
+                slotProps={{ htmlInput: { maxLength: MAX_RAW_TEXT_LENGTH } }}
               />
-              <Typography
-                variant="caption"
-                sx={{ display: 'block', textAlign: 'end', mt: 0.5 }}
-                color={rawText.trim().length >= MIN_RAW_TEXT_LENGTH ? 'success.main' : 'text.secondary'}
-              >
-                {rawText.trim().length} / {MIN_RAW_TEXT_LENGTH} תווים לפחות
-              </Typography>
+              <Stack direction="row" sx={{ mt: 0.5, justifyContent: 'space-between' }}>
+                <Typography variant="caption" color="text.secondary">
+                  {rawText.trim().length < MIN_RAW_TEXT_LENGTH
+                    ? `לפחות ${MIN_RAW_TEXT_LENGTH} תווים`
+                    : rawText.length >= MAX_RAW_TEXT_LENGTH
+                      ? 'הגעתם למגבלת התווים, הטקסט לא יכול להיות ארוך מזה'
+                      : ''}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color={rawText.length >= MAX_RAW_TEXT_LENGTH ? 'error.main' : 'text.secondary'}
+                >
+                  {rawText.length} / {MAX_RAW_TEXT_LENGTH} תווים
+                </Typography>
+              </Stack>
             </Box>
 
             <Box>

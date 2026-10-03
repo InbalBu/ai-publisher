@@ -18,6 +18,14 @@ public sealed class ArticlePublisher(
     AppDbContext db,
     ILogger<ArticlePublisher> logger)
 {
+    /// <summary>
+    /// Hard cap on raw article text, in characters. Generation time grows with
+    /// the length of the text, and a long enough article runs past the Gemini
+    /// timeout, so the cap is enforced here and mirrored in the frontend
+    /// (web/src/App.tsx MAX_RAW_TEXT_LENGTH) - keep the two values equal.
+    /// </summary>
+    public const int MaxRawTextLength = 6000;
+
     public async Task<PublishResult> PublishAsync(PublishRequest request, CancellationToken ct)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -135,6 +143,12 @@ public sealed class ArticlePublisher(
         if (string.IsNullOrWhiteSpace(request.RawText) || request.RawText.Length < 50)
         {
             throw new InvalidOperationException("Article text is too short.");
+        }
+
+        if (request.RawText.Length > MaxRawTextLength)
+        {
+            throw new InvalidOperationException(
+                $"Article text is too long: {request.RawText.Length} characters, the limit is {MaxRawTextLength}.");
         }
 
         if (!ArticleFormat.Categories.ContainsKey(request.CategoryId))
