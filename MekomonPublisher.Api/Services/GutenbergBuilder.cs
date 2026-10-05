@@ -150,9 +150,9 @@ public static class GutenbergBuilder
 
     private static string RenderBlock(ArticleBlock block) => block.Type switch
     {
-        "heading3" => HeadingBlock(HtmlSafety.Clean(block.Html), 3),
-        "list" => ListBlock((block.Items ?? []).Select(HtmlSafety.Clean)),
-        _ => ParagraphBlock(HtmlSafety.Clean(block.Html)),
+        "heading3" => HeadingBlock(HtmlSafety.AutoLinkUrls(HtmlSafety.Clean(block.Html)), 3),
+        "list" => ListBlock((block.Items ?? []).Select(item => HtmlSafety.AutoLinkUrls(HtmlSafety.Clean(item)))),
+        _ => ParagraphBlock(HtmlSafety.AutoLinkUrls(HtmlSafety.Clean(block.Html))),
     };
 
     private static string ParagraphBlock(string? innerHtml) =>

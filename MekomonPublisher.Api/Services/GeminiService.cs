@@ -243,6 +243,7 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
         sb.AppendLine("- Body 'blocks': at most one 'heading3' block, used only as the lead paragraph immediately after the deck. Every other block is 'paragraph'. Do not use headings as a substitute for paragraphs.");
         sb.AppendLine("- Paragraphs that open with an attribution or a named source start with a bold lead, e.g. '<strong>שם, תפקיד, אמר</strong>: ...'.");
         sb.AppendLine("- Never use <blockquote>. Never use <h1> or <h4> or lower. Inline formatting is limited to <strong>, <em>, <a>, <br>.");
+        sb.AppendLine("- If the raw text below contains a URL (http:// or https://), keep that exact URL verbatim in the rewritten body, in the same sentence/context it appeared in - never drop it, paraphrase it away, or shorten it. Do not wrap it in an <a> tag yourself; that is handled automatically afterward from the plain URL text.");
         sb.AppendLine("- 'metaDescription' is a genuine summary of 120 to 155 characters, not the title repeated.");
         sb.AppendLine("- 'seoTitle' is at most 66 characters and does not repeat the site name.");
         sb.AppendLine("- 'focusKeyword' is the one or two words naming the central person, business, or topic.");

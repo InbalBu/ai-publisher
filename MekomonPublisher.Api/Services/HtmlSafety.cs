@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace MekomonPublisher.Api.Services;
@@ -27,6 +28,65 @@ public static partial class HtmlSafety
 
         return result;
     }
+
+    /// <summary>
+    /// Turns any bare http(s) URL left in plain text into a real clickable
+    /// link. Does not depend on Gemini choosing to wrap a URL in an anchor
+    /// itself, which was never guaranteed: the prompt only said anchors are an
+    /// allowed tag. Opens in a new tab since the target is always another site.
+    /// Skips text already inside an anchor so an existing link's visible URL is
+    /// never double-wrapped.
+    /// </summary>
+    public static string AutoLinkUrls(string html)
+    {
+        if (string.IsNullOrEmpty(html))
+        {
+            return html;
+        }
+
+        string[] parts = TagPattern().Split(html);
+        var sb = new StringBuilder(html.Length + 32);
+        var insideAnchor = false;
+
+        for (var i = 0; i < parts.Length; i++)
+        {
+            // Split keeps the captured tags at odd indices; even indices are text between tags.
+            if (i % 2 == 1)
+            {
+                if (parts[i].StartsWith("<a", StringComparison.OrdinalIgnoreCase))
+                {
+                    insideAnchor = true;
+                }
+                else if (parts[i].Equals("</a>", StringComparison.OrdinalIgnoreCase))
+                {
+                    insideAnchor = false;
+                }
+
+                sb.Append(parts[i]);
+            }
+            else
+            {
+                sb.Append(insideAnchor ? parts[i] : BareUrlPattern().Replace(parts[i], LinkifyMatch));
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    // Trailing punctuation is almost always sentence punctuation, not part of the URL.
+    // Trim it off the link and append it after, so "...https://example.com." keeps the period out of the href.
+    private static string LinkifyMatch(Match match)
+    {
+        string url = match.Value.TrimEnd('.', ',', ';', ':', '!', '?', ')', ']', '"', '\'');
+        string trailing = match.Value[url.Length..];
+        return $"<a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">{url}</a>{trailing}";
+    }
+
+    [GeneratedRegex(@"https?://[^\s<>""']+")]
+    private static partial Regex BareUrlPattern();
+
+    [GeneratedRegex(@"(<[^>]+>)")]
+    private static partial Regex TagPattern();
 
     [GeneratedRegex(@"<script\b[^>]*>.*?</script>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex ScriptTag();
