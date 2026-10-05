@@ -128,12 +128,9 @@ public sealed class ArticlePublisher(
         catch (Exception ex)
         {
             stopwatch.Stop();
-            if (ex is SeoGenerationException seoFailure)
-            {
-                logger.LogWarning("SEO generation failed: {Detail}", seoFailure.Detail);
-            }
+            PublishFailure failure = PublishErrorMapper.Map(ex, ct);
 
-            logger.LogError(ex, "Publish failed after {ElapsedMs}ms", stopwatch.ElapsedMilliseconds);
+            logger.LogError(ex, "Publish failed after {ElapsedMs}ms with {Code}", stopwatch.ElapsedMilliseconds, failure.Code);
 
             foreach (int mediaId in uploadedMediaIds)
             {
@@ -145,7 +142,7 @@ public sealed class ArticlePublisher(
                 CreatedAtUtc = DateTime.UtcNow,
                 Success = false,
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
-                Error = ex.Message,
+                Error = $"{failure.Code}: {failure.Detail}",
             });
             await db.SaveChangesAsync(CancellationToken.None);
 
@@ -153,7 +150,8 @@ public sealed class ArticlePublisher(
             {
                 Success = false,
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
-                Error = ex.Message,
+                Error = failure.Message,
+                Code = failure.Code,
             };
         }
     }
@@ -162,39 +160,41 @@ public sealed class ArticlePublisher(
     {
         if (string.IsNullOrWhiteSpace(request.RawText) || request.RawText.Length < 50)
         {
-            throw new InvalidOperationException("Article text is too short.");
+            throw new PublishFailure(PublishCodes.TextShort, $"RawText length {request.RawText.Length}.");
         }
 
         if (request.RawText.Length > MaxRawTextLength)
         {
-            throw new InvalidOperationException(
-                $"Article text is too long: {request.RawText.Length} characters, the limit is {MaxRawTextLength}.");
+            throw new PublishFailure(
+                PublishCodes.TextLong,
+                $"RawText length {request.RawText.Length}, limit {MaxRawTextLength}.",
+                $"הטקסט ארוך מדי: {request.RawText.Length} תווים, המקסימום הוא {MaxRawTextLength:N0}. קצרו את הטקסט ונסו שוב.");
         }
 
         if (!ArticleFormat.Categories.ContainsKey(request.CategoryId))
         {
-            throw new InvalidOperationException($"Unknown category id {request.CategoryId}.");
+            throw new PublishFailure(PublishCodes.CategoryInvalid, $"Unknown category id {request.CategoryId}.");
         }
 
         if (request.Status is not ("publish" or "draft"))
         {
-            throw new InvalidOperationException("Status must be 'publish' or 'draft'.");
+            throw new PublishFailure(PublishCodes.StatusInvalid, $"Status '{request.Status}'.");
         }
 
         if (request.Images.Count == 0)
         {
-            throw new InvalidOperationException("At least one image is required.");
+            throw new PublishFailure(PublishCodes.NoImages, "No images in the request.");
         }
 
         if (request.FeaturedImageIndex < 0 || request.FeaturedImageIndex >= request.Images.Count)
         {
-            throw new InvalidOperationException("Featured image index is out of range.");
+            throw new PublishFailure(PublishCodes.FeaturedInvalid, $"Featured index {request.FeaturedImageIndex} of {request.Images.Count}.");
         }
 
         if (!request.UseAi &&
             (string.IsNullOrWhiteSpace(request.Title) || string.IsNullOrWhiteSpace(request.Subtitle)))
         {
-            throw new InvalidOperationException("Title and subtitle are required when AI generation is off.");
+            throw new PublishFailure(PublishCodes.ManualFieldsMissing, "Title or subtitle blank with AI generation off.");
         }
     }
 
@@ -289,10 +289,23 @@ public sealed class ArticlePublisher(
     /// preserved by the caller (LINQ Select over an ordered source), so no
     /// explicit index needs to travel through this method.
     /// </summary>
+    /// <summary>Runs one image conversion, turning any decode or resize failure into a readable image error.</summary>
+    private static ProcessedImage ReadImage(Func<ProcessedImage> process, string fileName)
+    {
+        try
+        {
+            return process();
+        }
+        catch (Exception ex)
+        {
+            throw new PublishFailure(PublishCodes.ImageUnreadable, $"Could not process '{fileName}': {ex.Message}");
+        }
+    }
+
     private async Task<GutenbergBuilder.ImageInfo> UploadBodyImageAsync(
         UploadedImage image, List<int> uploadedMediaIds, CancellationToken ct)
     {
-        ProcessedImage processed = images.ProcessBody(image.Bytes);
+        ProcessedImage processed = ReadImage(() => images.ProcessBody(image.Bytes), image.FileName);
         WpMedia media = await wordPress.UploadMediaAsync(processed.Bytes, $"img-{Guid.NewGuid():N}.jpg", ct);
 
         lock (uploadedMediaIds)
@@ -308,7 +321,7 @@ public sealed class ArticlePublisher(
         UploadedImage image, List<int> uploadedMediaIds, CancellationToken ct)
     {
         FaceDetectionResult? faceRegion = await gemini.DetectFaceRegionAsync(image.Bytes, ct);
-        ProcessedImage processed = images.ProcessFeatured(image.Bytes, faceRegion);
+        ProcessedImage processed = ReadImage(() => images.ProcessFeatured(image.Bytes, faceRegion), image.FileName);
         WpMedia media = await wordPress.UploadMediaAsync(processed.Bytes, $"featured-{Guid.NewGuid():N}.jpg", ct);
 
         lock (uploadedMediaIds)

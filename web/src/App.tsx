@@ -20,7 +20,7 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material'
-import { checkSession, fetchCategories, logout, publishArticle } from './api'
+import { PublishError, checkSession, fetchCategories, logout, publishArticle } from './api'
 import type { Category, PublishResult } from './api'
 import { clearDraft, loadDraft, saveDraft } from './draftStore'
 import LoginPage from './LoginPage'
@@ -219,6 +219,7 @@ function App() {
         success: false,
         elapsedMs: 0,
         error: err instanceof Error ? err.message : 'שגיאה לא ידועה',
+        code: err instanceof PublishError ? err.code : 'UNKNOWN',
       })
     } finally {
       setSubmitting(null)
@@ -532,7 +533,17 @@ function App() {
                 )}
               </>
             ) : (
-              <>הפרסום נכשל: {result.error}</>
+              <>
+                <strong>הפרסום נכשל.</strong> {result.error}
+                <Box component="span" sx={{ display: 'block', mt: 0.5 }}>
+                  הכתבה לא פורסמה והטופס נשמר, אפשר לנסות שוב.
+                </Box>
+                {result.code && (
+                  <Box component="span" sx={{ display: 'block', mt: 0.5, opacity: 0.7, fontSize: '0.8rem' }}>
+                    קוד שגיאה: {result.code}
+                  </Box>
+                )}
+              </>
             )}
           </Alert>
         )}

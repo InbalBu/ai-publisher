@@ -90,7 +90,7 @@ public sealed class WordPressClient(HttpClient http)
                     continue;
                 }
 
-                throw new InvalidOperationException($"WordPress failed to create tag '{trimmed}': 400 {errorBody}");
+                throw new WordPressApiException($"create tag '{trimmed}'", createResponse.StatusCode, errorBody);
             }
 
             await EnsureSuccessAsync(createResponse, $"create tag '{trimmed}'", ct);
@@ -151,6 +151,6 @@ public sealed class WordPressClient(HttpClient http)
         }
 
         string body = await response.Content.ReadAsStringAsync(ct);
-        throw new InvalidOperationException($"WordPress failed to {action}: {(int)response.StatusCode} {body}");
+        throw new WordPressApiException(action, response.StatusCode, body);
     }
 }

@@ -28,13 +28,13 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
     {
         if (string.IsNullOrWhiteSpace(_options.ApiKey))
         {
-            throw new InvalidOperationException(
+            throw new PublishFailure(PublishCodes.GeminiConfig,
                 "Gemini:ApiKey is not configured. Set it via 'dotnet user-secrets set Gemini:ApiKey <key>'.");
         }
 
         if (string.IsNullOrWhiteSpace(_options.Model))
         {
-            throw new InvalidOperationException(
+            throw new PublishFailure(PublishCodes.GeminiConfig,
                 "Gemini:Model is not configured. Set it in appsettings.Development.json to the current Gemini model id.");
         }
 
@@ -78,10 +78,10 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
 
         if (lastSeoError is not null)
         {
-            throw new SeoGenerationException(lastSeoError);
+            throw new PublishFailure(PublishCodes.SeoFailed, lastSeoError);
         }
 
-        throw new InvalidOperationException($"Gemini returned an unusable response after 2 attempts: {lastError}");
+        throw new PublishFailure(PublishCodes.ArticleInvalid, $"Gemini returned an unusable response after 2 attempts: {lastError}");
     }
 
     /// <summary>
@@ -92,6 +92,11 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
     public async Task<SeoFields> GenerateSeoAsync(
         string title, string subtitle, string rawText, string categoryName, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(_options.ApiKey) || string.IsNullOrWhiteSpace(_options.Model))
+        {
+            throw new PublishFailure(PublishCodes.GeminiConfig, "Gemini ApiKey or Model is not configured.");
+        }
+
         string? lastError = null;
 
         for (var attempt = 1; attempt <= 2; attempt++)
@@ -127,7 +132,7 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
             }
         }
 
-        throw new SeoGenerationException(lastError ?? "No usable SEO result.");
+        throw new PublishFailure(PublishCodes.SeoFailed, lastError ?? "No usable SEO result.");
     }
 
     /// <summary>
@@ -353,22 +358,40 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
         using CancellationTokenSource timeoutCts = new(TimeSpan.FromSeconds(_options.TimeoutSeconds));
         using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
-        HttpResponseMessage response = await http.SendAsync(request, linkedCts.Token);
+        HttpResponseMessage response;
+        try
+        {
+            response = await http.SendAsync(request, linkedCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Our own timeout fired, not the client leaving.
+            throw new PublishFailure(PublishCodes.GeminiTimeout, $"Gemini did not answer within {_options.TimeoutSeconds}s.");
+        }
+
         string responseBody = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Gemini API returned {(int)response.StatusCode}: {responseBody}");
+            throw new GeminiApiException(response.StatusCode, responseBody);
         }
 
-        using JsonDocument doc = JsonDocument.Parse(responseBody);
-        return doc.RootElement
-            .GetProperty("candidates")[0]
-            .GetProperty("content")
-            .GetProperty("parts")[0]
-            .GetProperty("text")
-            .GetString()
-            ?? throw new InvalidOperationException("Gemini response had no text content.");
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(responseBody);
+            return doc.RootElement
+                .GetProperty("candidates")[0]
+                .GetProperty("content")
+                .GetProperty("parts")[0]
+                .GetProperty("text")
+                .GetString()
+                ?? throw new InvalidOperationException("Gemini response had no text content.");
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or IndexOutOfRangeException or InvalidOperationException)
+        {
+            // An empty or blocked answer comes back without the expected candidates, so the path is missing.
+            throw new PublishFailure(PublishCodes.GeminiEmpty, $"Gemini response had no usable text: {ex.Message}");
+        }
     }
 
     private static string BuildPrompt(string rawText, string categoryName, int imageCount, string? repairNote)

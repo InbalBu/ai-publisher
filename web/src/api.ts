@@ -10,6 +10,34 @@ export interface PublishResult {
   status?: string
   elapsedMs: number
   error?: string
+  /** Short failure code (e.g. GEMINI_BUSY), shown to the operator so support can find the case. */
+  code?: string
+}
+
+/** A publish that failed before the server could answer with its own message. */
+export class PublishError extends Error {
+  code: string
+
+  constructor(code: string, message: string) {
+    super(message)
+    this.code = code
+  }
+}
+
+// Messages for failures the server never got to describe, such as a 429 from the rate limiter.
+const HTTP_FAILURES: Record<number, { code: string; message: string }> = {
+  400: { code: 'BAD_FORM', message: 'הטופס לא נשלח כראוי. רעננו את הדף ונסו שוב.' },
+  401: { code: 'SESSION_EXPIRED', message: 'פג תוקף ההתחברות. התחברו מחדש ונסו שוב. הטופס נשמר.' },
+  413: { code: 'REQUEST_TOO_LARGE', message: 'הקבצים שנשלחו גדולים מדי. הקטינו את התמונות או העלו פחות תמונות ונסו שוב.' },
+  429: { code: 'RATE_LIMITED', message: 'נשלחו יותר מדי בקשות לפרסום בזמן קצר. המתינו כמה דקות ונסו שוב.' },
+  502: { code: 'SERVER_UNAVAILABLE', message: 'השרת לא הגיב כרגע (תקלה זמנית). נסו שוב בעוד רגע.' },
+  503: { code: 'SERVER_UNAVAILABLE', message: 'השרת לא הגיב כרגע (תקלה זמנית). נסו שוב בעוד רגע.' },
+  504: { code: 'SERVER_UNAVAILABLE', message: 'השרת לא הגיב כרגע (תקלה זמנית). נסו שוב בעוד רגע.' },
+}
+
+const UNKNOWN_FAILURE = {
+  code: 'UNKNOWN',
+  message: 'משהו לא צפוי קרה בזמן הפרסום. נסו שוב. אם זה חוזר, פנו לתמיכה עם קוד השגיאה.',
 }
 
 export async function checkSession(): Promise<{ username: string } | null> {
@@ -81,13 +109,21 @@ export async function publishArticle(args: PublishArgs): Promise<PublishResult> 
     form.append('imageCaptions', args.captions[i] ?? '')
   }
 
-  const response = await fetch('/api/publish', {
-    method: 'POST',
-    credentials: 'same-origin',
-    body: form,
-  })
+  let response: Response
+  try {
+    response = await fetch('/api/publish', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: form,
+    })
+  } catch {
+    // No response at all: the connection dropped or the server is unreachable.
+    throw new PublishError('NETWORK', 'בעיית תקשורת עם השרת. בדקו את החיבור לאינטרנט ונסו שוב.')
+  }
+
   if (!response.ok) {
-    throw new Error(`Publish request failed: ${response.status}`)
+    const failure = HTTP_FAILURES[response.status] ?? UNKNOWN_FAILURE
+    throw new PublishError(failure.code, failure.message)
   }
   return response.json()
 }

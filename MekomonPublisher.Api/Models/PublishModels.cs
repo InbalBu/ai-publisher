@@ -62,5 +62,9 @@ public sealed class PublishResult
 
     public required long ElapsedMs { get; init; }
 
+    /// <summary>Customer-facing message, in Hebrew. Null on success.</summary>
     public string? Error { get; init; }
+
+    /// <summary>Short code for the failure (see PublishCodes), shown to the operator so support can find the case.</summary>
+    public string? Code { get; init; }
 }
