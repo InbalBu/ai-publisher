@@ -18,6 +18,11 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    /// <summary>Yoast's limits for the SEO fields, in characters.</summary>
+    private const int SeoTitleMaxLength = 66;
+    private const int MetaDescriptionMinLength = 120;
+    private const int MetaDescriptionMaxLength = 155;
+
     public async Task<GeneratedArticle> GenerateAsync(
         string rawText, string categoryName, int imageCount, CancellationToken ct)
     {
@@ -34,9 +39,11 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
         }
 
         string? lastError = null;
+        string? lastSeoError = null;
 
         for (var attempt = 1; attempt <= 2; attempt++)
         {
+            lastSeoError = null;
             string prompt = BuildPrompt(rawText, categoryName, imageCount, lastError);
             string responseText = await CallGeminiAsync(prompt, ct);
 
@@ -50,6 +57,17 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
                 }
 
                 TextSanitizer.Clean(article);
+
+                // Same Yoast rules as the manual path: an AI article whose SEO fields
+                // would show red is retried, not published.
+                string? seoProblem = SeoProblem(article.FocusKeyword, article.SeoTitle, article.MetaDescription, rawText);
+                if (seoProblem is not null)
+                {
+                    lastError = seoProblem;
+                    lastSeoError = seoProblem;
+                    continue;
+                }
+
                 return article;
             }
             catch (JsonException ex)
@@ -58,8 +76,138 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
             }
         }
 
+        if (lastSeoError is not null)
+        {
+            throw new SeoGenerationException(lastSeoError);
+        }
+
         throw new InvalidOperationException($"Gemini returned an unusable response after 2 attempts: {lastError}");
     }
+
+    /// <summary>
+    /// Writes the Yoast fields for an article whose text the operator typed
+    /// as-is (manual mode). A result that would show red on Yoast's keyphrase
+    /// checks is retried, not published, the same as a bad article is.
+    /// </summary>
+    public async Task<SeoFields> GenerateSeoAsync(
+        string title, string subtitle, string rawText, string categoryName, CancellationToken ct)
+    {
+        string? lastError = null;
+
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            string prompt = BuildSeoPrompt(title, subtitle, rawText, categoryName, lastError);
+            string responseText = await CallGeminiAsync(prompt, ct, BuildSeoSchema());
+
+            SeoFields? seo;
+            try
+            {
+                seo = JsonSerializer.Deserialize<SeoFields>(responseText, JsonOptions);
+            }
+            catch (JsonException ex)
+            {
+                lastError = ex.Message;
+                continue;
+            }
+
+            if (seo is null)
+            {
+                lastError = "Response was empty.";
+                continue;
+            }
+
+            seo.FocusKeyword = (TextSanitizer.Clean(seo.FocusKeyword) ?? "").Trim();
+            seo.SeoTitle = (TextSanitizer.Clean(seo.SeoTitle) ?? "").Trim();
+            seo.MetaDescription = (TextSanitizer.Clean(seo.MetaDescription) ?? "").Trim();
+
+            lastError = SeoProblem(seo.FocusKeyword, seo.SeoTitle, seo.MetaDescription, rawText);
+            if (lastError is null)
+            {
+                return seo;
+            }
+        }
+
+        throw new SeoGenerationException(lastError ?? "No usable SEO result.");
+    }
+
+    /// <summary>
+    /// Returns why these SEO fields would show red in Yoast's keyphrase checks,
+    /// or null when they pass. The same rules apply in both modes.
+    /// </summary>
+    private static string? SeoProblem(string focusKeyword, string seoTitle, string metaDescription, string rawText)
+    {
+        if (focusKeyword.Length == 0)
+        {
+            return "focusKeyword is empty.";
+        }
+
+        if (!rawText.Contains(focusKeyword, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"focusKeyword '{focusKeyword}' does not appear in the article text.";
+        }
+
+        if (seoTitle.Length == 0 || seoTitle.Length > SeoTitleMaxLength)
+        {
+            return $"seoTitle is {seoTitle.Length} characters, it must be between 1 and {SeoTitleMaxLength}.";
+        }
+
+        if (!seoTitle.StartsWith(focusKeyword, StringComparison.OrdinalIgnoreCase))
+        {
+            return "seoTitle does not start with focusKeyword.";
+        }
+
+        if (metaDescription.Length is < MetaDescriptionMinLength or > MetaDescriptionMaxLength)
+        {
+            return $"metaDescription is {metaDescription.Length} characters, it must be between {MetaDescriptionMinLength} and {MetaDescriptionMaxLength}.";
+        }
+
+        if (!metaDescription.Contains(focusKeyword, StringComparison.OrdinalIgnoreCase))
+        {
+            return "metaDescription does not contain focusKeyword.";
+        }
+
+        return null;
+    }
+
+    private static string BuildSeoPrompt(
+        string title, string subtitle, string rawText, string categoryName, string? repairNote)
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine("You are the SEO editor for מקומון ראשון, a Hebrew local news site. Write the SEO fields for the article below and return ONLY the JSON described by the response schema, nothing else.");
+        sb.AppendLine();
+        sb.AppendLine("- focusKeyword: the one or two words naming the central person, business, or topic. It must appear word for word in the article text below.");
+        sb.AppendLine($"- seoTitle: at most {SeoTitleMaxLength} characters. It MUST begin with focusKeyword exactly as written. Do not repeat the site name.");
+        sb.AppendLine($"- metaDescription: a genuine summary of {MetaDescriptionMinLength} to {MetaDescriptionMaxLength} characters, not the title repeated. It MUST contain focusKeyword.");
+        sb.AppendLine("- Hebrew, right-to-left. Use the Hebrew gershayim ״ and geresh ׳ characters, never straight ASCII quotes or apostrophes.");
+        sb.AppendLine();
+        sb.AppendLine($"Category: {categoryName}");
+        sb.AppendLine($"Title: {title}");
+        sb.AppendLine($"Subtitle: {subtitle}");
+        sb.AppendLine();
+        sb.AppendLine("Article text:");
+        sb.AppendLine(rawText);
+
+        if (repairNote is not null)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"Your previous response was rejected: {repairNote}. Return valid JSON matching the schema exactly, and follow every rule above.");
+        }
+
+        return sb.ToString();
+    }
+
+    private static JsonObject BuildSeoSchema() => new()
+    {
+        ["type"] = "object",
+        ["properties"] = new JsonObject
+        {
+            ["focusKeyword"] = new JsonObject { ["type"] = "string" },
+            ["seoTitle"] = new JsonObject { ["type"] = "string" },
+            ["metaDescription"] = new JsonObject { ["type"] = "string" },
+        },
+        ["required"] = new JsonArray { "focusKeyword", "seoTitle", "metaDescription" },
+    };
 
     /// <summary>
     /// Finds the union bounding box of any human faces in the featured image,
@@ -175,7 +323,7 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
         }
     }
 
-    private async Task<string> CallGeminiAsync(string prompt, CancellationToken ct)
+    private async Task<string> CallGeminiAsync(string prompt, CancellationToken ct, JsonObject? schema = null)
     {
         var body = new JsonObject
         {
@@ -191,7 +339,7 @@ public sealed class GeminiService(HttpClient http, IOptions<GeminiOptions> optio
             {
                 ["temperature"] = _options.Temperature,
                 ["responseMimeType"] = "application/json",
-                ["responseSchema"] = BuildResponseSchema(),
+                ["responseSchema"] = schema ?? BuildResponseSchema(),
             },
         };
 

@@ -46,7 +46,7 @@ public static class TextSanitizer
     }
 
     [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(input))]
-    private static string? Clean(string? input)
+    public static string? Clean(string? input)
     {
         if (string.IsNullOrEmpty(input))
         {

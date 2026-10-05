@@ -35,6 +35,13 @@ interface ImageEntry {
 const MIN_RAW_TEXT_LENGTH = 50
 /** Must match ArticlePublisher.MaxRawTextLength on the server. */
 const MAX_RAW_TEXT_LENGTH = 6000
+/** Yoast's recommended minimum for an article body. Below it the form warns, but does not block. */
+const MIN_WORD_COUNT = 300
+
+function countWords(text: string): number {
+  const trimmed = text.trim()
+  return trimmed === '' ? 0 : trimmed.split(/\s+/).length
+}
 
 /** A small uppercase label with an accent bar, used to separate the form into scannable steps. */
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -161,6 +168,8 @@ function App() {
       return index < prev ? prev - 1 : prev
     })
   }
+
+  const wordCount = countWords(rawText)
 
   const canSubmit =
     rawText.trim().length >= MIN_RAW_TEXT_LENGTH &&
@@ -299,6 +308,16 @@ function App() {
                   {rawText.length} / {MAX_RAW_TEXT_LENGTH} תווים
                 </Typography>
               </Stack>
+              <Typography
+                variant="caption"
+                color={wordCount < MIN_WORD_COUNT ? 'warning.main' : 'text.secondary'}
+                sx={{ display: 'block', mt: 0.5 }}
+              >
+                {wordCount} מילים
+                {wordCount > 0 &&
+                  wordCount < MIN_WORD_COUNT &&
+                  ` - מתחת ל-${MIN_WORD_COUNT} מילים. הכתבה עלולה לקבל ציון SEO נמוך, מומלץ להוסיף תוכן.`}
+              </Typography>
             </Box>
 
             <Box>

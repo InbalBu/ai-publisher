@@ -46,6 +46,13 @@ public sealed class ArticlePublisher(
                 ? gemini.GenerateAsync(request.RawText, categoryName, request.Images.Count, ct)
                 : Task.FromResult(BuildManualArticle(request));
 
+            // Manual mode publishes the operator's text as typed, but the Yoast
+            // fields are still written by AI from that text. Started here, with the
+            // uploads, so it overlaps them. In AI mode they come with the article.
+            Task<SeoFields>? manualSeoTask = request.UseAi
+                ? null
+                : gemini.GenerateSeoAsync(request.Title!, request.Subtitle!, request.RawText, categoryName, ct);
+
             Task<GutenbergBuilder.ImageInfo>[] bodyUploadTasks = request.Images
                 .Select(image => UploadBodyImageAsync(image, uploadedMediaIds, ct))
                 .ToArray();
@@ -55,6 +62,14 @@ public sealed class ArticlePublisher(
 
             await Task.WhenAll([.. bodyUploadTasks, featuredUploadTask]);
             GeneratedArticle article = await generationTask;
+
+            if (manualSeoTask is not null)
+            {
+                SeoFields seo = await manualSeoTask;
+                article.FocusKeyword = seo.FocusKeyword;
+                article.SeoTitle = seo.SeoTitle;
+                article.MetaDescription = seo.MetaDescription;
+            }
 
             GutenbergBuilder.ImageInfo[] bodyImages = bodyUploadTasks.Select(t => t.Result).ToArray();
             await ApplyAltTextAsync(bodyImages, article.ImagePlacements, ct);
@@ -113,6 +128,11 @@ public sealed class ArticlePublisher(
         catch (Exception ex)
         {
             stopwatch.Stop();
+            if (ex is SeoGenerationException seoFailure)
+            {
+                logger.LogWarning("SEO generation failed: {Detail}", seoFailure.Detail);
+            }
+
             logger.LogError(ex, "Publish failed after {ElapsedMs}ms", stopwatch.ElapsedMilliseconds);
 
             foreach (int mediaId in uploadedMediaIds)
